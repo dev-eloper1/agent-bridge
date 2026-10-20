@@ -491,6 +491,10 @@ async function handleWorkersCommand($, e) {
       await $.ui.close({ id: "external-workers" });
       return { text: "Worker pane closed. Tasks continue." };
     }
+    if (argument === "dashboard") {
+      const dashboard = await call($, "dashboard", {});
+      return { text: "Agent Bridge dashboard: " + dashboard.url };
+    }
     if (argument === "stop") {
       await call($, "shutdown");
       timer?.cancel();

@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-20T14:13:50.910Z",
+  "scope": "Instruction delivery, pinned revisions and fresh definitions; not a reviewer-quality eval",
+  "providers": {
+    "pi": {
+      "delivery": "task-instructions",
+      "steps": [],
+      "outcome": "failed",
+      "error": "Task ended failed: Internal error: Cannot call write after a stream was destroyed"
+    },
+    "claude": {
+      "delivery": "system-append",
+      "steps": [
+        {
+          "expected": "BRIDGE_SPECIALIST_ORIGINAL",
+          "passed": true,
+          "elapsedMs": 2600,
+          "digest": "702076b3fb382f1f7b34f2b165de2fa46ec91ef37d8df260542563ef7efb6ef0"
+        }
+      ],
+      "outcome": "failed",
+      "error": "Task ended failed: Resource not found: 5d318cb4-ad41-4af8-bdaf-c023cd628cda"
+    }
+  }
+}

@@ -25,14 +25,43 @@ import {
   identifyWorkspace,
   verifyWorkspace,
 } from "./workspaces.js";
+import {
+  templateDefinition,
+  createTemplate,
+  templateRef,
+  templateRoots,
+  resolveTemplate,
+  listTemplates,
+  templateMetadata,
+  validateTemplateBinding,
+} from "./templates.js";
+import { startDashboard } from "./dashboard.js";
 const taskId = z.string().regex(/^task_[a-f0-9-]{36}$/);
 const message = z.string().min(1).max(16000);
 export const inputs = {
   list: z.object({}).strict(),
+  dashboard: z.object({}).strict(),
+  define: z
+    .object({
+      scope: z.enum(["project", "global"]).default("project"),
+      definition: templateDefinition,
+    })
+    .strict(),
+  templates: z
+    .object({
+      reference: templateRef.optional(),
+      agentSessionId: z
+        .string()
+        .regex(/^conversation_[a-f0-9-]{36}$/)
+        .optional(),
+      agentId: z.string().max(64).optional(),
+    })
+    .strict(),
   spawn: z
     .object({
       agentId: z.string().max(64),
       prompt: message,
+      template: templateRef.optional(),
       taskKey: z.string().min(1).max(100).optional(),
       acceptanceCriteria: z.array(z.string().max(500)).max(20).default([]),
       workspace: workspaceInput.optional(),
@@ -104,11 +133,16 @@ interface Question {
 }
 export class Runtime {
   store: Store;
+  // Keyed by agentSessionId: each conversation owns one ACP process, so fresh
+  // conversations on the same profile run in parallel and cancel independently.
   workers = new Map<string, Worker>();
+  // agentId -> most recently started conversation, for list().
   workerSessions = new Map<string, string>();
   active = new Map<string, Active>();
   questions = new Map<string, Question>();
   closed = false;
+  dashboardServer?: Awaited<ReturnType<typeof startDashboard>>;
+  dashboardStarting?: Promise<Awaited<ReturnType<typeof startDashboard>>>;
   constructor(readonly config: Config) {
     this.store = new Store(config.stateDir, config.runtime.maxArtifactBytes);
     const sessions = Object.values(this.store.state.sessions);
@@ -188,13 +222,93 @@ export class Runtime {
       throw Error("Unknown method");
     const a: any = inputs[method as Method].parse(raw);
     switch (method) {
+      case "dashboard": {
+        if (!this.dashboardServer) {
+          this.dashboardStarting ??= startDashboard(
+            this.config,
+            async (method, args) => {
+              try {
+                return await this.call(method, args);
+              } catch (error) {
+                throw Error(
+                  this.sanitize(
+                    error instanceof Error ? error.message : String(error),
+                  ),
+                );
+              }
+            },
+          );
+          try {
+            this.dashboardServer = await this.dashboardStarting;
+          } finally {
+            this.dashboardStarting = undefined;
+          }
+        }
+        return {
+          url: this.dashboardServer.url,
+          scope: "This project's runtime; loopback only",
+          capabilities: [
+            "inspect definitions",
+            "create definitions",
+            "read task reports",
+          ],
+          limitations: [
+            "no workflow runner",
+            "no worker launch or permissions controls",
+          ],
+        };
+      }
+      case "define":
+        return createTemplate(
+          templateRoots(this.config.root),
+          a.scope,
+          a.definition,
+        );
+      case "templates": {
+        const roots = templateRoots(this.config.root);
+        if (a.agentSessionId) {
+          if (a.reference || a.agentId)
+            throw Error(
+              "Inspect either a saved reference or a pinned conversation, not both",
+            );
+          const session = Object.values(this.store.state.sessions).find(
+            (s) => s.agentSessionId === a.agentSessionId,
+          );
+          if (!session?.template)
+            throw Error("Conversation has no saved agent definition");
+          return {
+            ...session.template,
+            pinned: true,
+            binding: validateTemplateBinding(
+              session.template,
+              this.config,
+              session.agentId,
+            ),
+          };
+        }
+        if (!a.reference) {
+          if (a.agentId)
+            throw Error("Inspect a specific definition to preview its binding");
+          return listTemplates(roots);
+        }
+        const definition = resolveTemplate(roots, a.reference);
+        return {
+          ...definition,
+          binding: a.agentId
+            ? validateTemplateBinding(definition, this.config, a.agentId)
+            : undefined,
+        };
+      }
       case "list":
         return Object.entries(this.config.agents).map(([agentId, agent]) => {
           const sessions = Object.values(this.store.state.sessions).filter(
             (s) => s.agentId === agentId,
           );
+          const running = [...this.active.values()].filter(
+            (r) => r.task.agentId === agentId,
+          );
           const current =
-            this.active.get(agentId)?.task.agentSessionId ??
+            running.at(-1)?.task.agentSessionId ??
             this.workerSessions.get(agentId);
           const s =
             sessions.find((s) => s.agentSessionId === current) ??
@@ -212,11 +326,12 @@ export class Runtime {
             available,
             executable: executable ?? null,
             missingDependencies,
-            status: this.active.has(agentId)
+            status: running.length
               ? "busy"
-              : this.workers.has(agentId)
+              : this.workerKeys(agentId).length
                 ? "ready"
                 : "registered",
+            runningTasks: running.length,
             agentSessionId: s?.agentSessionId,
             workerName: s?.workerName,
             activeTasks: Object.values(this.store.state.tasks)
@@ -235,6 +350,7 @@ export class Runtime {
             sessions: sessions.slice(-10).map((s) => ({
               agentSessionId: s.agentSessionId,
               workerName: s.workerName,
+              template: s.template ? templateMetadata(s.template) : undefined,
               workspace: s.workspace ?? this.defaultWorkspace(agentId),
               cwd: s.cwd,
               lastTask: Object.values(this.store.state.tasks)
@@ -311,6 +427,23 @@ export class Runtime {
           throw Error(
             "Provider/workspace configuration changed for durable conversation; start a fresh conversation",
           );
+        if (
+          s &&
+          a.template &&
+          (!s.template ||
+            resolveTemplate(templateRoots(this.config.root), a.template)
+              .digest !== s.template.digest)
+        )
+          throw Error(
+            "Definition differs from the pinned conversation; omit template to continue it or start a fresh conversation",
+          );
+        const definition =
+          s?.template ??
+          (a.template
+            ? resolveTemplate(templateRoots(this.config.root), a.template)
+            : undefined);
+        if (definition)
+          validateTemplateBinding(definition, this.config, a.agentId);
         if (!s) {
           const identity =
             selected.mode === "project" || selected.mode === "directory"
@@ -331,6 +464,7 @@ export class Runtime {
               ),
             ),
             fingerprint,
+            template: definition,
             workspace: selected,
             workspaceIdentity: identity,
             cwd: identity?.canonicalPath,
@@ -351,8 +485,21 @@ export class Runtime {
             a.description ?? a.prompt.split("\n")[0],
           ).slice(0, 120),
           execution: a.execution,
-          acceptanceCriteria: a.acceptanceCriteria,
+          acceptanceCriteria: [
+            ...(definition?.acceptanceCriteria ?? []),
+            ...a.acceptanceCriteria,
+          ],
           provider: agent.provider,
+          template: definition
+            ? {
+                id: definition.id,
+                name: definition.name,
+                version: definition.version,
+                digest: definition.digest,
+                scope: definition.scope,
+                delivery: definition.delivery,
+              }
+            : undefined,
           verification: "pending",
           followups: [],
           steeringCount: 0,
@@ -459,7 +606,7 @@ export class Runtime {
         const t = this.store.task(a.taskId);
         if (terminal(t.status)) return this.compact(t);
         this.finish(t, "cancelled", "Cancelled by coordinator");
-        const r = this.active.get(t.agentId);
+        const r = this.active.get(t.agentSessionId);
         if (r?.task.taskId === t.taskId) this.interrupt(r);
         return this.compact(t);
       }
@@ -512,8 +659,25 @@ export class Runtime {
     if (this.closed) return;
     for (const t of Object.values(this.store.state.tasks)) {
       if (this.active.size >= this.config.runtime.maxConcurrentTasks) break;
-      if (t.status === "queued" && !this.active.has(t.agentId))
+      // Only turns within one conversation serialize; they share a native session.
+      if (t.status === "queued" && !this.active.has(t.agentSessionId))
         void this.run(t);
+    }
+  }
+  workerKeys(agentId: string) {
+    return [...this.workers.keys()].filter(
+      (key) =>
+        Object.values(this.store.state.sessions).find(
+          (s) => s.agentSessionId === key,
+        )?.agentId === agentId,
+    );
+  }
+  // Keep at most one idle process per profile, matching the former reuse footprint.
+  evictIdle(agentId: string, keep: string) {
+    for (const key of this.workerKeys(agentId)) {
+      if (key === keep || this.active.has(key)) continue;
+      this.workers.get(key)?.kill();
+      this.workers.delete(key);
     }
   }
   finish(t: Task, status: Status, summary: string) {
@@ -546,8 +710,8 @@ export class Runtime {
     const s = this.session(r.task);
     if (r.worker && s.nativeSessionId) void r.worker.cancel(s.nativeSessionId);
     // Terminate immediately after sending best-effort cancel; do not reuse a possibly busy process.
-    (r.worker ?? this.workers.get(r.task.agentId))?.kill();
-    this.workers.delete(r.task.agentId);
+    (r.worker ?? this.workers.get(r.task.agentSessionId))?.kill();
+    this.workers.delete(r.task.agentSessionId);
     r.reject(Error("Task interrupted"));
   }
   async workspace(s: Session) {
@@ -604,7 +768,8 @@ export class Runtime {
         this.interrupt(r);
       }, this.config.runtime.maxRuntimeMs),
     };
-    this.active.set(t.agentId, r);
+    this.active.set(t.agentSessionId, r);
+    this.workerSessions.set(t.agentId, t.agentSessionId);
     t.status = "running";
     t.summary = "";
     t.startedAt = now();
@@ -613,11 +778,12 @@ export class Runtime {
       await Promise.race([this.execute(r), interrupted]);
     } catch (e) {
       this.finish(t, "failed", e instanceof Error ? e.message : String(e));
-      (r.worker ?? this.workers.get(t.agentId))?.kill();
-      this.workers.delete(t.agentId);
+      (r.worker ?? this.workers.get(t.agentSessionId))?.kill();
+      this.workers.delete(t.agentSessionId);
     } finally {
       clearTimeout(r.timer);
-      this.active.delete(t.agentId);
+      this.active.delete(t.agentSessionId);
+      this.evictIdle(t.agentId, t.agentSessionId);
       this.schedule();
     }
   }
@@ -629,16 +795,20 @@ export class Runtime {
     t.cwd = cwd;
     this.store.save();
     if (terminal(t.status)) return;
-    let w = this.workers.get(t.agentId);
-    if (w && this.workerSessions.get(t.agentId) !== s.agentSessionId) {
-      this.workers.delete(t.agentId);
-      w.kill();
-      w = undefined;
-    }
+    const key = s.agentSessionId;
+    let w = this.workers.get(key);
     if (!w || w.dead) {
-      w = new Worker(this.config, a.provider, cwd, {
+      this.evictIdle(t.agentId, key);
+      // Late callbacks from a killed process must not reach a newer run of this conversation.
+      const owner = () => {
+        const active = this.active.get(key);
+        return active && !worker.dead && active.worker === worker
+          ? active
+          : undefined;
+      };
+      const worker: Worker = new Worker(this.config, a.provider, cwd, {
         log: (text) => {
-          const active = this.active.get(t.agentId);
+          const active = owner();
           const task = active?.task;
           if (task && !terminal(task.status)) {
             try {
@@ -649,12 +819,19 @@ export class Runtime {
             }
           }
         },
-        update: (value) => this.update(t.agentId, value),
-        question: (kind, value) => this.question(t.agentId, kind, value),
+        update: (value) => {
+          if (owner()) this.update(key, value);
+        },
+        question: async (kind, value) =>
+          owner()
+            ? this.question(key, kind, value)
+            : kind === "input"
+              ? { action: "decline" }
+              : { outcome: { outcome: "cancelled" } },
         exit: () => {
-          if (this.workers.get(t.agentId) !== r.worker) return;
-          this.workers.delete(t.agentId);
-          const active = this.active.get(t.agentId);
+          if (this.workers.get(key) !== r.worker) return;
+          this.workers.delete(key);
+          const active = this.active.get(key);
           if (
             active &&
             active.worker === r.worker &&
@@ -669,14 +846,20 @@ export class Runtime {
           }
         },
       });
+      w = worker;
       r.worker = w;
-      this.workers.set(t.agentId, w);
-      this.workerSessions.set(t.agentId, s.agentSessionId);
+      this.workers.set(key, w);
       const init = await w.initialize();
       s.capabilities =
         (init.agentCapabilities as Record<string, unknown>) ?? {};
       verifyWorkspace(cwd, s.workspaceIdentity);
-      const response = await w.session(cwd, s.nativeSessionId);
+      const response = await w.session(
+        cwd,
+        s.nativeSessionId,
+        s.template?.delivery === "system-append"
+          ? s.template.instructions
+          : undefined,
+      );
       if (!s.nativeSessionId) {
         if (!response || !("sessionId" in response))
           throw Error("Missing native session ID");
@@ -698,6 +881,8 @@ export class Runtime {
       s.models as { currentModelId?: string } | undefined
     )?.currentModelId;
     let prompt = this.store.readArtifactText(t.taskId, "prompt.txt");
+    if (s.template?.delivery === "task-instructions")
+      prompt = `Saved agent instructions (${s.template.id}@${s.template.version}; user-task context, not a system prompt):\n${s.template.instructions}\n\nCurrent assignment:\n${prompt}`;
     if (t.acceptanceCriteria.length)
       prompt +=
         "\nAcceptance criteria (coordinator verifies independently):\n" +
@@ -762,8 +947,8 @@ export class Runtime {
     }
     this.finish(t, "completed", t.summary || "Completed; inspect artifacts");
   }
-  update(agentId: string, value: any) {
-    const r = this.active.get(agentId);
+  update(key: string, value: any) {
+    const r = this.active.get(key);
     if (!r || terminal(r.task.status)) return;
     const t = r.task;
     const s = this.session(t);
@@ -856,11 +1041,11 @@ export class Runtime {
     }
   }
   async question(
-    agentId: string,
+    key: string,
     kind: "input" | "permission",
     request: any,
   ): Promise<any> {
-    const t = this.active.get(agentId)?.task;
+    const t = this.active.get(key)?.task;
     const declined =
       kind === "input"
         ? { action: "decline" }
@@ -875,7 +1060,7 @@ export class Runtime {
       return declined;
     if (
       kind === "permission" &&
-      this.config.agents[agentId].workspace === "read-only"
+      this.config.agents[t.agentId].workspace === "read-only"
     )
       return declined;
     const questionId = uid("question");
@@ -916,6 +1101,7 @@ export class Runtime {
     });
   }
   close() {
+    this.dashboardServer?.server.close();
     this.closed = true;
     for (const r of this.active.values()) {
       this.finish(
