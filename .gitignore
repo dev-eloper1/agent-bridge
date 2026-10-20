@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.agent-bridge/
+*.sock
+.DS_Store
+spikes/*.txt
+spikes/claude-code.d.ts
+spikes/acpx/
+spikes/devin-subagents/
+spikes/open-agent-bridge/
+spikes/codex-acp/
+spikes/mod/.claude-plugin/types/
+
+.claude-plugin/types/
+
+# Machine-local approvals, credentials and generated diagnostic logs
+.claude/settings.local.json
+.env
+.env.*
+!.env.example
+*.log

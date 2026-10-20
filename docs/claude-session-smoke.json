@@ -1,0 +1,97 @@
+{
+  "date": "2026-10-20T02:30:51.893Z",
+  "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-claude-plugin-CiB0c9",
+  "exitCode": 0,
+  "mode": "installed-plugin",
+  "tools": [
+    {
+      "name": "Skill",
+      "skill": "agent-bridge:delegate"
+    },
+    {
+      "name": "ToolSearch"
+    },
+    {
+      "name": "mcp__plugin_agent-bridge_workers__agents_run",
+      "agentId": "pi-reviewer",
+      "workspace": {
+        "mode": "project"
+      }
+    },
+    {
+      "name": "mcp__plugin_agent-bridge_workers__agents_run",
+      "agentId": "pi-reviewer"
+    },
+    {
+      "name": "mcp__plugin_agent-bridge_workers__agents_run",
+      "agentId": "pi-reviewer",
+      "workspace": {
+        "mode": "project"
+      }
+    }
+  ],
+  "result": "Here are Pi's three answers:\n\n1. **Read fixture.txt:** `PLUGIN-3915311d20`. Pi read only `fixture.txt` to get it.\n2. **Same-session follow-up, no tools:** `PLUGIN-3915311d20`. It matches the first answer, and no tool calls were logged, so the label came from the earlier conversation. My prompt didn't include it.\n3. **Fresh session, no tools:** `SESSION-FRESH`. This ran as a new, separate session.\n\nIn the two new sessions, Pi printed its startup banner (version, skills and extensions) before the answer. I left that out above. No files were changed.",
+  "modStatusObserved": [
+    "Workers idle · /workers",
+    "pi-read-fixture-label · Working",
+    "pi-read-fixture-label · Reviewing results",
+    "pi-fresh-session-check · Preparing result"
+  ],
+  "tasks": [
+    {
+      "taskId": "task_5613595e-abf0-486a-a85d-fa6ec787b42f",
+      "agentId": "pi-reviewer",
+      "agentSessionId": "conversation_c1cbf081-cfe5-470c-8f49-37e492ebfa57",
+      "workerName": "pi-read-fixture-label",
+      "status": "completed",
+      "summary": "pi v1.3.0\n---\n\n## Skills\n- /Users/bhushan/.agents/skills/visual-storytelling/SKILL.md\n- /Users/bhushan/.agents/skills/cmux/SKILL.md\n\n## Extensions\n- npm:pi-lmstudio\n  - index.ts\nPLUGIN-3915311d20",
+      "workspace": {
+        "mode": "project"
+      },
+      "cwd": "/private/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-claude-plugin-CiB0c9",
+      "recentActivity": [
+        {
+          "toolCallId": "call_5f8093818ef1476797941711ecd7e164|fc_076622b05cda82bd016ad6d2491d6481949531a117f5c94160",
+          "title": "read",
+          "status": "completed",
+          "timestamp": "2026-10-20T02:30:33.213Z",
+          "kind": "read",
+          "paths": [
+            "fixture.txt"
+          ]
+        }
+      ],
+      "execution": "foreground",
+      "description": "Read fixture label"
+    },
+    {
+      "taskId": "task_a7bfab3a-3ac8-4d9f-9680-32c93a2d20ad",
+      "agentId": "pi-reviewer",
+      "agentSessionId": "conversation_c1cbf081-cfe5-470c-8f49-37e492ebfa57",
+      "workerName": "pi-read-fixture-label",
+      "status": "completed",
+      "summary": "PLUGIN-3915311d20",
+      "workspace": {
+        "mode": "project"
+      },
+      "cwd": "/private/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-claude-plugin-CiB0c9",
+      "execution": "foreground",
+      "description": "Repeat label from context"
+    },
+    {
+      "taskId": "task_f90dfe0c-9718-48b2-8ea9-63649e8b4e79",
+      "agentId": "pi-reviewer",
+      "agentSessionId": "conversation_36524b86-50f3-4fb8-8e0a-74c13818f2e0",
+      "workerName": "pi-fresh-session-check",
+      "status": "completed",
+      "summary": "pi v1.3.0\n---\n\n## Skills\n- /Users/bhushan/.agents/skills/visual-storytelling/SKILL.md\n- /Users/bhushan/.agents/skills/cmux/SKILL.md\n\n## Extensions\n- npm:pi-lmstudio\n  - index.ts\nSESSION-FRESH",
+      "workspace": {
+        "mode": "project"
+      },
+      "cwd": "/private/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-claude-plugin-CiB0c9",
+      "execution": "foreground",
+      "description": "Fresh session check"
+    }
+  ],
+  "outcome": "passed"
+}

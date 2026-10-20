@@ -1,0 +1,354 @@
+import {
+  mkdirSync,
+  existsSync,
+  readFileSync,
+  openSync,
+  writeSync,
+  fsyncSync,
+  closeSync,
+  renameSync,
+  lstatSync,
+  realpathSync,
+  constants,
+  fstatSync,
+  readSync,
+  writeFileSync,
+} from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import type { Workspace, WorkspaceIdentity } from "./workspaces.js";
+import { z } from "zod";
+export const uid = (prefix: string) => `${prefix}_${randomUUID()}`;
+export const now = () => new Date().toISOString();
+export type Status =
+  | "queued"
+  | "running"
+  | "blocked_on_input"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "timed_out";
+export const terminal = (s: Status) =>
+  ["completed", "failed", "cancelled", "timed_out"].includes(s);
+export interface Session {
+  agentSessionId: string;
+  workerName?: string;
+  agentId: string;
+  nativeSessionId?: string;
+  cwd?: string;
+  workspace?: Workspace;
+  workspaceIdentity?: WorkspaceIdentity;
+  capabilities?: Record<string, unknown>;
+  models?: unknown;
+  recovery?: string;
+  fingerprint: string;
+}
+export interface Task {
+  taskId: string;
+  agentId: string;
+  agentSessionId: string;
+  workerName?: string;
+  workspace?: Workspace;
+  cwd?: string;
+  status: Status;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  summary: string;
+  taskKey?: string;
+  description?: string;
+  execution?: "foreground" | "background";
+  acceptanceCriteria: string[];
+  verification: "pending";
+  provider?: string;
+  modelId?: string;
+  usage?: { used?: number; size?: number; cost?: unknown; attribution: string };
+  question?: {
+    artifactRef: string;
+    questionId: string;
+    kind: "input" | "permission";
+    summary: string;
+    options?: { optionId: string; kind: string; name: string }[];
+  };
+  followups: string[];
+  steeringCount: number;
+  stopReason?: string;
+  activity?: { text: string; timestamp: string };
+  recentActivity?: {
+    toolCallId: string;
+    title: string;
+    kind?: string;
+    status: string;
+    timestamp: string;
+    paths?: string[];
+  }[];
+}
+export interface Event {
+  eventId: string;
+  cursor: number;
+  taskId: string;
+  agentId: string;
+  type: string;
+  timestamp: string;
+  summary: string;
+  requiresReply: boolean;
+  artifactRefs: string[];
+}
+interface State {
+  version: 1;
+  tasks: Record<string, Task>;
+  sessions: Record<string, Session>;
+  events: Event[];
+}
+const storedTask = z
+  .object({
+    taskId: z.string(),
+    agentId: z.string(),
+    agentSessionId: z.string(),
+    workerName: z
+      .string()
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+      .optional(),
+    status: z.enum([
+      "queued",
+      "running",
+      "blocked_on_input",
+      "completed",
+      "failed",
+      "cancelled",
+      "timed_out",
+    ]),
+    createdAt: z.string(),
+    summary: z.string(),
+    acceptanceCriteria: z.array(z.string()),
+    verification: z.literal("pending"),
+    followups: z.array(z.string()),
+    steeringCount: z.number().int().nonnegative(),
+  })
+  .passthrough();
+const storedState = z
+  .object({
+    version: z.literal(1),
+    tasks: z.record(storedTask),
+    sessions: z.record(
+      z
+        .object({
+          agentSessionId: z.string(),
+          workerName: z
+            .string()
+            .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+            .optional(),
+          agentId: z.string(),
+          fingerprint: z.string(),
+          workspaceIdentity: z
+            .object({
+              canonicalPath: z.string(),
+              device: z.string(),
+              inode: z.string(),
+            })
+            .optional(),
+        })
+        .passthrough(),
+    ),
+    events: z.array(
+      z
+        .object({
+          eventId: z.string(),
+          cursor: z.number().int().positive(),
+          taskId: z.string(),
+          agentId: z.string(),
+          type: z.string(),
+          timestamp: z.string(),
+          summary: z.string(),
+          requiresReply: z.boolean(),
+          artifactRefs: z.array(z.string()),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough()
+  .superRefine((s, ctx) => {
+    for (const [key, task] of Object.entries(s.tasks))
+      if (
+        key !== task.taskId ||
+        !Object.values(s.sessions).some(
+          (session) =>
+            session.agentSessionId === task.agentSessionId &&
+            session.agentId === task.agentId,
+        )
+      )
+        ctx.addIssue({
+          code: "custom",
+          message: "Invalid task/conversation mapping",
+        });
+    if (
+      s.events.some(
+        (event, i) => event.cursor !== i + 1 || !s.tasks[event.taskId],
+      )
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Invalid event sequence or task reference",
+      });
+  });
+export class Store {
+  state: State;
+  readonly artifactRoot: string;
+  constructor(
+    readonly dir: string,
+    readonly maxBytes: number,
+  ) {
+    mkdirSync(path.join(dir, "artifacts"), { recursive: true, mode: 0o700 });
+    if (lstatSync(path.join(dir, "artifacts")).isSymbolicLink())
+      throw Error("Unsafe artifact directory: symlink");
+    this.artifactRoot = realpathSync(path.join(dir, "artifacts"));
+    if (existsSync(this.file)) {
+      try {
+        this.state = storedState.parse(
+          JSON.parse(readFileSync(this.file, "utf8")),
+        ) as State;
+      } catch {
+        throw Error(
+          `Invalid Agent Bridge state: ${this.file}. Original file preserved; restore a valid backup or inspect it before restarting.`,
+        );
+      }
+    } else this.state = { version: 1, tasks: {}, sessions: {}, events: [] };
+  }
+  get file() {
+    return path.join(this.dir, "state.json");
+  }
+  save() {
+    const tmp = this.file + ".tmp";
+    const fd = openSync(tmp, "w", 0o600);
+    try {
+      writeSync(fd, JSON.stringify(this.state));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, this.file);
+    const d = openSync(this.dir, "r");
+    try {
+      fsyncSync(d);
+    } finally {
+      closeSync(d);
+    }
+  }
+  artifactPath(taskId: string, name: string) {
+    if (
+      !/^task_[a-f0-9-]{36}$/.test(taskId) ||
+      !/^[a-z-]+\.(txt|jsonl|patch)$/.test(name)
+    )
+      throw Error("Invalid artifact reference");
+    this.checkArtifactDirectory(this.artifactRoot);
+    const dir = path.join(this.artifactRoot, taskId);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    this.checkArtifactDirectory(dir);
+    const file = path.join(dir, name);
+    try {
+      if (lstatSync(file).isSymbolicLink())
+        throw Error("Unsafe artifact file: symlink");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    return file;
+  }
+  private checkArtifactDirectory(directory: string) {
+    const stat = lstatSync(directory);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      realpathSync(directory) !== directory
+    )
+      throw Error("Unsafe artifact directory: symlink or replacement");
+  }
+  private openArtifact(taskId: string, name: string, append = false) {
+    const file = this.artifactPath(taskId, name);
+    const fd = openSync(
+      file,
+      constants.O_NOFOLLOW |
+        constants.O_NONBLOCK |
+        (append
+          ? constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT
+          : constants.O_RDONLY),
+      0o600,
+    );
+    try {
+      const stat = fstatSync(fd);
+      if (!stat.isFile() || stat.nlink !== 1)
+        throw Error("Unsafe artifact file: not a private regular file");
+      this.checkArtifactDirectory(this.artifactRoot);
+      this.checkArtifactDirectory(path.dirname(file));
+      return { fd, size: stat.size };
+    } catch (e) {
+      closeSync(fd);
+      throw e;
+    }
+  }
+  artifactSize(taskId: string, name: string): number | undefined {
+    try {
+      const { fd, size } = this.openArtifact(taskId, name);
+      closeSync(fd);
+      return size;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw e;
+    }
+  }
+  readArtifact(taskId: string, name: string, offset: number, limit: number) {
+    const { fd, size } = this.openArtifact(taskId, name);
+    try {
+      const length = Math.max(0, Math.min(limit, size - offset));
+      const bytes = Buffer.alloc(length);
+      const read = readSync(fd, bytes, 0, length, offset);
+      return {
+        text: bytes.subarray(0, read).toString("utf8"),
+        offset,
+        nextOffset: offset + read,
+        totalBytes: size,
+        eof: offset + read >= size,
+        unit: "bytes; UTF-8 chunks may split code points",
+      };
+    } finally {
+      closeSync(fd);
+    }
+  }
+  readArtifactText(taskId: string, name: string) {
+    const { fd, size } = this.openArtifact(taskId, name);
+    try {
+      if (size > this.maxBytes) throw Error("Artifact byte budget exceeded");
+      return readFileSync(fd, "utf8");
+    } finally {
+      closeSync(fd);
+    }
+  }
+  append(taskId: string, name: string, text: string) {
+    const { fd, size } = this.openArtifact(taskId, name, true);
+    try {
+      if (size + Buffer.byteLength(text) > this.maxBytes)
+        throw Error("Artifact byte budget exceeded");
+      writeFileSync(fd, text);
+    } finally {
+      closeSync(fd);
+    }
+  }
+  event(t: Task, type: string, summary: string, requiresReply = false) {
+    this.state.events.push({
+      eventId: uid("evt"),
+      cursor: this.state.events.length + 1,
+      taskId: t.taskId,
+      agentId: t.agentId,
+      type,
+      timestamp: now(),
+      summary: summary.slice(0, 240),
+      requiresReply,
+      artifactRefs: [`artifact://${t.taskId}/transcript.jsonl`],
+    });
+    this.save();
+  }
+  task(taskId: string) {
+    const t = this.state.tasks[taskId];
+    if (!t) throw Error("Unknown task");
+    return t;
+  }
+}

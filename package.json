@@ -1,0 +1,37 @@
+{
+  "name": "agent-bridge",
+  "version": "0.5.2",
+  "private": true,
+  "type": "module",
+  "description": "Local durable ACP workers for Claude Code",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js serve",
+    "bridge": "node dist/cli.js",
+    "mcp": "node dist/cli.js mcp",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "demo": "npm run build && node scripts/demo.mjs",
+    "smoke": "npm run build && node scripts/real-smoke.mjs",
+    "test:mod": "CMUX_CLAUDE_HOOKS_DISABLED=1 claude plugin test .",
+    "smoke:providers": "npm run build && node scripts/provider-smoke.mjs",
+    "smoke:claude-plugin": "npm run build && node scripts/claude-plugin-smoke.mjs"
+  },
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.94.0",
+    "@agentclientprotocol/codex-acp": "2.2.2",
+    "@agentclientprotocol/sdk": "2.0.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "pi-acp": "0.0.34",
+    "yaml": "2.9.1",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "acpx": "0.19.6",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3"
+  }
+}

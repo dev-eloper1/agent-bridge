@@ -1,0 +1,67 @@
+{
+  "date": "2026-10-20T01:17:19.103Z",
+  "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-claude-plugin-4OjLSF",
+  "exitCode": 0,
+  "mode": "installed-plugin",
+  "tools": [
+    {
+      "name": "Skill",
+      "skill": "agent-bridge:delegate"
+    },
+    {
+      "name": "ToolSearch"
+    },
+    {
+      "name": "mcp__plugin_agent-bridge_workers__agents_run",
+      "agentId": "codex-worker",
+      "workspace": {
+        "mode": "project"
+      }
+    }
+  ],
+  "result": "Codex reviewed the project through Agent Bridge without editing any files.\n\n- **Bug in `review.js:1`:** the function is named `sum(a, b)` but it returns `a - b`. So `sum(2, 3)` returns `-1` when it should return `5`. Codex reproduced this by loading the file into Node in memory, without writing anything to disk.\n- **Exact label in `fixture.txt`:** `PLUGIN-dfd355d6d4`. The file ends with a newline.\n\nCodex reported that it didn't create, edit or delete any files and didn't run Git. I didn't check either the bug or the label myself, because you ruled out shell commands and other workers.",
+  "modStatusObserved": [
+    "Workers idle · /workers",
+    "codex · Review project: bug in review.js, label in fixture.txt · Working",
+    "codex · Review project: bug in review.js, label in fixture.txt · Preparing result",
+    "codex · Review project: bug in review.js, label in fixture.txt · Reviewing results"
+  ],
+  "tasks": [
+    {
+      "taskId": "task_b5b6d785-b50d-4e06-ab6d-0ca2db3a8ff2",
+      "agentId": "codex-worker",
+      "status": "completed",
+      "summary": "I’ll inspect the files as data and trace the bug without changing files or Git state.- **Bug:** [review.js:1](review.js:1) defines `sum(a, b)` but returns `a - b`. Calling `sum(2, 3)` should return `5`; it returns `-1`. **Actually reproduced** using Node with an in-memory import, without writing files.\n- **Exact fixture label:** `PLUGIN-dfd355d6d4`\n- **Other context:** `fixture.txt` ends with a ne",
+      "workspace": {
+        "mode": "project"
+      },
+      "cwd": "/private/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-claude-plugin-4OjLSF",
+      "recentActivity": [
+        {
+          "toolCallId": "exec-39c72370-040c-479c-8d15-bb8a19165215",
+          "title": "pwd; rg --files -g '!node_modules' -g '!.git' -g '!vendor'",
+          "status": "completed",
+          "timestamp": "2026-10-20T01:17:04.835Z",
+          "kind": "execute"
+        },
+        {
+          "toolCallId": "exec-1b6b82ed-a2df-42e5-9023-292068a9a826",
+          "title": "ls -la; nl -ba review.js; nl -ba fixture.txt; od -An -tx1c fixture.txt",
+          "status": "completed",
+          "timestamp": "2026-10-20T01:17:07.469Z",
+          "kind": "execute"
+        },
+        {
+          "toolCallId": "exec-682f4784-3e1f-4ce7-85f3-e199e3cf5769",
+          "title": "node --input-type=module -e 'import { readFileSync } from \"node:fs\"; const source = readFileSync(\"review.js\", \"utf8\"); const { sum } = await import(\"data:text/javascript;base64,\" + Buffer.from(source).toString(\"base64\")); console.log(JSON.s",
+          "status": "completed",
+          "timestamp": "2026-10-20T01:17:11.199Z",
+          "kind": "execute"
+        }
+      ],
+      "execution": "foreground",
+      "description": "Review project: bug in review.js, label in fixture.txt"
+    }
+  ],
+  "outcome": "passed"
+}

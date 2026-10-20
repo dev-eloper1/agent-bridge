@@ -1,0 +1,102 @@
+import { readFileSync, realpathSync, mkdirSync, lstatSync } from "node:fs";
+import { createHash } from "node:crypto";
+import path from "node:path";
+import { parse } from "yaml";
+import { z } from "zod";
+const id = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
+const provider = z
+  .object({
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    env: z.record(z.string()).default({}),
+    envNames: z.array(z.string()).default([]),
+    envPaths: z.array(z.string()).default([]),
+    requires: z.array(z.string().min(1)).default([]),
+    errorOutputPrefixes: z
+      .array(z.string().min(1).max(200))
+      .max(10)
+      .default([]),
+    readOnlyEnforced: z.boolean().default(false),
+  })
+  .strict();
+export const schema = z
+  .object({
+    version: z.literal(1),
+    runtime: z
+      .object({
+        stateDir: z.string().default(".agent-bridge"),
+        workspaceRoot: z.string().optional(),
+        maxConcurrentTasks: z.number().int().min(1).max(16).default(2),
+        maxRuntimeMs: z.number().int().min(100).max(86400000).default(7200000),
+        maxInlineChars: z.number().int().min(100).max(6000).default(2000),
+        maxArtifactBytes: z
+          .number()
+          .int()
+          .min(1024)
+          .max(100000000)
+          .default(10000000),
+      })
+      .strict()
+      .default({}),
+    providers: z.record(id, provider),
+    agents: z.record(
+      id,
+      z
+        .object({
+          provider: id,
+          description: z.string().max(400),
+          workspace: z
+            .enum(["read-only", "project", "isolated-worktree"])
+            .default("project"),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .superRefine((c, ctx) => {
+    for (const [name, a] of Object.entries(c.agents)) {
+      const p = c.providers[a.provider];
+      if (!p)
+        ctx.addIssue({
+          code: "custom",
+          message: `Unknown provider for ${name}`,
+        });
+      else if (a.workspace === "read-only" && !p.readOnlyEnforced)
+        ctx.addIssue({
+          code: "custom",
+          message: `${name}: read-only needs provider-side enforcement; ACP is not a sandbox`,
+        });
+    }
+  });
+export type Config = z.infer<typeof schema> & {
+  root: string;
+  stateDir: string;
+  socket: string;
+};
+export function loadConfig(file = "agents.yaml"): Config {
+  const base = realpathSync(path.dirname(path.resolve(file)));
+  const c = schema.parse(parse(readFileSync(file, "utf8")));
+  const root = realpathSync(path.resolve(base, c.runtime.workspaceRoot ?? "."));
+  const stateDir = path.resolve(root, c.runtime.stateDir);
+  let socket = path.join(stateDir, "runtime.sock");
+  // macOS sockaddr_un is short. Keep state in the project but relocate only long sockets.
+  if (Buffer.byteLength(socket) >= 100) {
+    const uid = process.getuid?.() ?? 0;
+    const directory = path.join("/tmp", `agent-bridge-${uid}`);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(directory);
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      stat.uid !== uid ||
+      (stat.mode & 0o077) !== 0
+    )
+      throw Error("Unsafe shared socket directory: " + directory);
+    socket = path.join(
+      directory,
+      createHash("sha256").update(stateDir).digest("hex").slice(0, 24) +
+        ".sock",
+    );
+  }
+  return { ...c, root, stateDir, socket };
+}

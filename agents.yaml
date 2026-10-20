@@ -1,0 +1,98 @@
+version: 1
+runtime:
+  stateDir: .agent-bridge
+  maxConcurrentTasks: 2
+  maxRuntimeMs: 600000
+  maxInlineChars: 2000
+  maxArtifactBytes: 10485760
+providers:
+  mock:
+    command: node
+    args: [scripts/mock-acp.mjs]
+    env:
+      MOCK_STATE: .agent-bridge/mock-sessions.json
+    readOnlyEnforced: true # fixture performs no workspace operations
+  devin:
+    command: devin
+    args: [acp]
+    envNames: [DEVIN_API_KEY, XDG_CONFIG_HOME, XDG_DATA_HOME]
+  cursor:
+    command: agent
+    args: [acp]
+    envNames: [CURSOR_API_KEY]
+  codex:
+    command: ./node_modules/.bin/codex-acp
+    args: []
+    requires: [codex]
+    env:
+      CODEX_PATH: codex
+    envPaths: [CODEX_PATH]
+    envNames: [CODEX_HOME, CODEX_API_KEY, OPENAI_API_KEY]
+  claude:
+    command: ./node_modules/.bin/claude-agent-acp
+    args: []
+    requires: [claude]
+    env:
+      CLAUDE_CODE_EXECUTABLE: ~/.local/bin/claude
+      CMUX_CLAUDE_HOOKS_DISABLED: "1"
+    envPaths: [CLAUDE_CODE_EXECUTABLE]
+    envNames: [CLAUDE_CONFIG_DIR, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN]
+  opencode:
+    command: opencode
+    args: [acp]
+    envNames:
+      [
+        XDG_CONFIG_HOME,
+        XDG_DATA_HOME,
+        OPENAI_API_KEY,
+        ANTHROPIC_API_KEY,
+        OPENCODE_API_KEY,
+      ]
+  pi:
+    command: ./node_modules/.bin/pi-acp
+    args: []
+    requires: [pi]
+    env:
+      PI_ACP_PI_COMMAND: ./scripts/pi-readonly.mjs
+    envPaths: [PI_ACP_PI_COMMAND]
+    envNames: [PI_CODING_AGENT_DIR, OPENAI_API_KEY, ANTHROPIC_API_KEY]
+    readOnlyEnforced: true
+  copilot:
+    command: copilot
+    args: [--acp, --stdio, --no-auto-update, --model, auto]
+    errorOutputPrefixes: ["Error: Execution failed:"]
+    envNames:
+      [COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN, COPILOT_PROVIDERS_CONFIG]
+agents:
+  demo:
+    provider: mock
+    description: Deterministic offline integration demo
+    workspace: read-only
+  devin-worker:
+    provider: devin
+    description: Devin local implementation worker (local CLI; authentication required)
+    workspace: project
+  cursor-worker:
+    provider: cursor
+    description: Cursor local implementation worker (local CLI; authentication required)
+    workspace: project
+  codex-worker:
+    provider: codex
+    description: Codex adapter using the project folder by default
+    workspace: project
+  claude-worker:
+    provider: claude
+    description: Claude Code through the pinned Claude Agent ACP adapter
+    workspace: project
+  opencode-worker:
+    provider: opencode
+    description: OpenCode native ACP using its configured provider
+    workspace: project
+  pi-reviewer:
+    provider: pi
+    description: Pi via ACP adapter, restricted to built-in read tools
+    workspace: read-only
+  copilot-worker:
+    provider: copilot
+    description: GitHub Copilot CLI native ACP worker
+    workspace: project

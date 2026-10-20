@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "agent-bridge": {
+      "command": "node",
+      "args": [
+        "/ABSOLUTE/PATH/agent-bridge/dist/cli.js",
+        "--config",
+        "/ABSOLUTE/PATH/agent-bridge/agents.yaml",
+        "mcp"
+      ]
+    }
+  }
+}

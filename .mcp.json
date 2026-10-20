@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "workers": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/cli.js", "plugin-mcp"],
+      "env": {
+        "AGENT_BRIDGE_PLUGIN_VERSION": "0.5.2"
+      }
+    }
+  }
+}

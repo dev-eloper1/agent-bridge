@@ -1,0 +1,205 @@
+{
+  "providers": {
+    "claude": {
+      "testedAt": "2026-10-19T23:44:05.661Z",
+      "provider": "claude",
+      "steps": [],
+      "permissions": [],
+      "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-claude-g2sB9i",
+      "cliVersion": "2.1.304 (Claude Code)",
+      "availability": "installed",
+      "command": "/Users/bhushan/Documents/Projects/agent-bridge/node_modules/.bin/claude-agent-acp",
+      "capabilities": {
+        "_meta": {
+          "claudeCode": {
+            "promptQueueing": true
+          },
+          "authStatus": {}
+        },
+        "promptCapabilities": {
+          "image": true,
+          "embeddedContext": true
+        },
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "auth": {
+          "logout": {}
+        },
+        "providers": {},
+        "loadSession": true,
+        "sessionCapabilities": {
+          "additionalDirectories": {},
+          "close": {},
+          "delete": {},
+          "fork": {},
+          "list": {},
+          "resume": {},
+          "systemPrompt": {
+            "mode": {
+              "override": {}
+            }
+          }
+        }
+      },
+      "models": {
+        "currentModelId": "opus",
+        "count": 13,
+        "sample": [
+          {
+            "modelId": "default",
+            "name": "Default (recommended)"
+          },
+          {
+            "modelId": "opus",
+            "name": "Opus 5.5"
+          },
+          {
+            "modelId": "fable",
+            "name": "Fable 5.1"
+          },
+          {
+            "modelId": "sonnet",
+            "name": "Sonnet 5.5"
+          },
+          {
+            "modelId": "haiku",
+            "name": "Haiku 5.5"
+          }
+        ]
+      },
+      "outcome": "probe-passed",
+      "stderr": "[session/create] sessionId=ed635f78-2fec-4b2d-b1e1-b922b32edda0 phase=validate-cwd durationMs=0 totalMs=0\n[session/create] sessionId=ed635f78-2fec-4b2d-b1e1-b922b32edda0 phase=settings durationMs=10 totalMs=10\n[session/query] sessionId=ed635f78-2fec-4b2d-b1e1-b922b32edda0 resume=none apiType=native baseUrl=native\n[session/create] sessionId=ed635f78-2fec-4b2d-b1e1-b922b32edda0 phase=prepare-query durationMs=3 totalMs=13\n[authStatus] discarding a probe that predates the latest auth change\n[session/create] sessionId=ed635f78-2fec-4b2d-b1e1-b922b32edda0 phase=sdk-initialize durationMs=561 totalMs=574\n[session/create] sessionId=ed635f78-2fec-4b2d-b1e1-b922b32edda0 phase=models durationMs=1 totalMs=575\n[session/create] sessionId=ed635f78-2fec-4b2d-b1e1-b922b32edda0 phase=modes durationMs=0 totalMs=575\n[session/create] sessionId=ed635f78-2fec-4b2d-b1e1-b922b32edda0 phase=agents durationMs=0 totalMs=575\n[session/create] sessionId=ed635f78-2fec-4b2d-b1e1-b922b32edda0 phase=register durationMs=1 totalMs=576\n"
+    },
+    "opencode": {
+      "testedAt": "2026-10-19T23:44:06.539Z",
+      "provider": "opencode",
+      "steps": [],
+      "permissions": [],
+      "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-opencode-XM7eKo",
+      "cliVersion": "opencode v2.0.32",
+      "availability": "installed",
+      "command": "/Users/bhushan/.opencode/bin/opencode",
+      "capabilities": {
+        "loadSession": true,
+        "mcpCapabilities": {
+          "http": true,
+          "sse": false
+        },
+        "promptCapabilities": {
+          "embeddedContext": true,
+          "image": true
+        },
+        "sessionCapabilities": {
+          "additionalDirectories": {},
+          "close": {},
+          "delete": {},
+          "fork": {},
+          "list": {},
+          "resume": {}
+        },
+        "_meta": {
+          "opencode/child-session-updates": true
+        }
+      },
+      "models": {
+        "currentModelId": "opencode/minimax-m3.1-flash-free",
+        "count": 27,
+        "sample": [
+          {
+            "modelId": "lmstudio/google/gemma-4-26b-a4b",
+            "name": "lmstudio/Gemma 4 26B A4B"
+          },
+          {
+            "modelId": "lmstudio/google/gemma-4-31b",
+            "name": "lmstudio/Gemma 4 31B"
+          },
+          {
+            "modelId": "lmstudio/gemma-4-31b-it-claude-opus-distilled-v2-mlx-int6-affine",
+            "name": "lmstudio/Gemma 4 31B Instruct Claude Opus Distilled v2 Int6 Affine"
+          },
+          {
+            "modelId": "lmstudio/google/gemma-4-e4b",
+            "name": "lmstudio/Gemma 4 E4B"
+          },
+          {
+            "modelId": "lmstudio/qwen/qwen3.6-27b",
+            "name": "lmstudio/Qwen3.6 27B"
+          }
+        ]
+      },
+      "outcome": "probe-passed"
+    },
+    "devin": {
+      "testedAt": "2026-10-19T23:44:07.204Z",
+      "provider": "devin",
+      "steps": [],
+      "permissions": [],
+      "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-devin-LIr4tm",
+      "cliVersion": "devin 3000.11.92 (7f4e64980e22)",
+      "availability": "installed",
+      "command": "/Users/bhushan/.local/bin/devin",
+      "capabilities": {
+        "loadSession": true,
+        "promptCapabilities": {
+          "image": true,
+          "audio": false,
+          "embeddedContext": true
+        },
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "sessionCapabilities": {
+          "list": {},
+          "delete": {},
+          "additionalDirectories": {},
+          "close": {
+            "_meta": {
+              "cognition.ai/force": true
+            }
+          }
+        },
+        "auth": {},
+        "_meta": {
+          "cognition.ai/multiRootWorkspace": true,
+          "cognition.ai/sessionListContentSearch": true,
+          "cognition.ai/sessionListOrderBy": [
+            "updated_at",
+            "created_at"
+          ],
+          "cognition.ai/sessionRename": true,
+          "cognition.ai/persistOnCreate": true,
+          "cognition.ai/sessionShare": true,
+          "cognition.ai/documentLifecycle": true,
+          "cognition.ai/userEdits": true,
+          "cognition.ai/terminalLifecycle": true,
+          "cognition.ai/userConfig": true,
+          "cognition.ai/userShellCommand": true,
+          "cognition.ai/editableCommands": true,
+          "cognition.ai/commandRevision": true,
+          "cognition.ai/chains": true,
+          "cognition.ai/megaplan": true,
+          "cognition.ai/ruleMentions": true,
+          "cognition.ai/midTurnPrompts": true
+        }
+      },
+      "models": {
+        "currentModelId": "swe-1-6-slow",
+        "count": 1,
+        "sample": [
+          {
+            "modelId": "swe-1-6-slow",
+            "name": "SWE-1.6 Slow"
+          }
+        ]
+      },
+      "outcome": "probe-passed",
+      "stderr": "_agent::agent_builder: close time.busy=625ns time.idle=4.92µs\n2026-10-19T23:44:07.350522Z  INFO acp_startup{pre_init_ms=6}:new_session:create_acp_agent:setup_agent:build_agent_config:build_profiles:load_custom_subagents: chisel_agent::agent_builder: close time.busy=330µs time.idle=253µs\n2026-10-19T23:44:07.350573Z  INFO acp_startup{pre_init_ms=6}:new_session:create_acp_agent:setup_agent:build_agent_config:build_profiles:register_builtin_profiles: chisel_agent::agent_builder: close time.busy=59.8µs time.idle=634µs\n2026-10-19T23:44:07.350578Z  INFO acp_startup{pre_init_ms=6}:new_session:create_acp_agent:setup_agent:build_agent_config:build_profiles:render_system_prompt: chisel_agent::agent_builder: close time.busy=17.7µs time.idle=700µs\n2026-10-19T23:44:07.350582Z  INFO acp_startup{pre_init_ms=6}:new_session:create_acp_agent:setup_agent:build_agent_config:build_profiles: chisel_agent::agent_builder: close time.busy=479µs time.idle=245µs\n2026-10-19T23:44:07.350638Z  INFO acp_startup{pre_init_ms=6}:new_session:create_acp_agent:setup_agent:build_agent_config: chisel_agent::agent_builder: close time.busy=547µs time.idle=242µs\n2026-10-19T23:44:07.350731Z  INFO acp_startup{pre_init_ms=6}:new_session:create_acp_agent:setup_agent: chisel_agent::acp_server::editor_context: EditorContextHandler registered\n2026-10-19T23:44:07.350738Z  INFO acp_startup{pre_init_ms=6}:new_session:create_acp_agent:setup_agent: chisel_agent::acp_server::terminal_context: TerminalContextHandler registered\n2026-10-19T23:44:07.350743Z  INFO acp_startup{pre_init_ms=6}:new_session:create_acp_agent:setup_agent: chisel_agent::acp_server::user_edits_context: UserEditsContextHandler registered\n2026-10-19T23:44:07.350773Z  INFO acp_startup{pre_init_ms=6}:new_session:create_acp_agent:setup_agent: local_agent::agent_setup: close time.busy=6.61ms time.idle=9.40ms\n2026-10-19T23:44:07.351211Z  INFO acp_startup{pre_init_ms=6}:new_session:create_acp_agent: chisel_server::acp: close time.busy=19.2ms time.idle=9.57ms\n"
+    }
+  },
+  "date": "2026-10-19T23:44:05.660Z",
+  "platform": "darwin",
+  "node": "v26.2.0"
+}

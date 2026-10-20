@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="780" viewBox="0 0 1440 780" role="img" aria-labelledby="title desc">
+<title id="title">Agent Bridge: one Claude conversation, persistent local workers</title>
+<desc id="desc">Claude Code delegates through Agent Bridge to Devin, Pi, Codex, Cursor, OpenCode, Copilot and Claude. Worker progress and results return to Claude. Conversations persist across follow-up tasks.</desc>
+<defs>
+ <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101c30"/><stop offset="1" stop-color="#07141e"/></linearGradient>
+ <linearGradient id="accent"><stop stop-color="#5eead4"/><stop offset="1" stop-color="#60a5fa"/></linearGradient>
+ <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4 0 8" fill="none" stroke="#5eead4" stroke-width="1.4"/></marker>
+ <style>text{font-family:Inter,Arial,Helvetica,sans-serif} .body{font-size:19px;fill:#c1cedc}.small{font-size:16px;fill:#91a5bb}.label{font-size:24px;font-weight:700;fill:#f1f5f9}.mono{font-family:Menlo,Consolas,monospace;font-size:15px;fill:#7ee6d4}</style>
+</defs>
+<rect width="1440" height="780" rx="24" fill="url(#bg)"/>
+<rect x="48" y="48" width="46" height="6" rx="3" fill="url(#accent)"/>
+<text x="110" y="58" class="mono" letter-spacing="3">LOCAL CLI ORCHESTRATION</text>
+<text x="48" y="126" fill="#f8fafc" font-size="55" font-weight="750">Agent Bridge</text>
+<text x="48" y="172" class="body" font-size="24">One Claude conversation. Your coding agents. Context that continues.</text>
+<rect x="48" y="220" width="350" height="302" rx="18" fill="#18283d" stroke="#38506a"/>
+<text x="76" y="262" class="mono">01 / COORDINATE</text>
+<text x="76" y="309" class="label">Stay in Claude Code</text>
+<text x="76" y="348" class="body">Ask naturally. Follow progress.</text>
+<text x="76" y="378" class="body">Inspect and verify the result.</text>
+<rect x="76" y="408" width="294" height="82" rx="10" fill="#0d1929"/>
+<text x="94" y="440" fill="#e2e8f0" font-size="17">“Use Devin to fix this.</text>
+<text x="94" y="467" fill="#e2e8f0" font-size="17">Ask Pi to review the changes.”</text>
+<path d="M410 353H462" stroke="#5eead4" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="478" y="220" width="396" height="302" rx="18" fill="#102e37" stroke="#39998e"/>
+<text x="506" y="262" class="mono">02 / BRIDGE</text>
+<text x="506" y="309" class="label">Delegate. Keep the session.</text>
+<text x="506" y="348" class="body">Skills + tools + native Mod UI</text>
+<text x="506" y="383" class="body">Persistent local runtime</text>
+<text x="506" y="418" class="body">Bounded artifacts and events</text>
+<rect x="506" y="448" width="239" height="35" rx="17" fill="#184b4d"/>
+<text x="522" y="471" fill="#99f6e4" font-size="16">Agent Client Protocol / ACP</text>
+<path d="M886 353H938" stroke="#5eead4" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="954" y="220" width="438" height="302" rx="18" fill="#18283d" stroke="#38506a"/>
+<text x="982" y="262" class="mono">03 / EXECUTE LOCALLY</text>
+<text x="982" y="309" class="label">Use your installed harnesses</text>
+<text x="982" y="353" class="body">Devin · Pi · Codex · Cursor</text>
+<text x="982" y="388" class="body">OpenCode · Copilot · Claude</text>
+<line x1="982" y1="415" x2="1364" y2="415" stroke="#38506a"/>
+<text x="982" y="452" class="small">Native CLI authentication and models</text>
+<text x="982" y="481" class="small">Fresh tasks or exact conversation follow-ups</text>
+<path d="M1173 535V562H223V535" fill="none" stroke="#5eead4" stroke-opacity=".65" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="478" y="546" width="396" height="32" rx="16" fill="#0c202c"/>
+<text x="531" y="568" class="mono">progress · questions · results</text>
+<line x1="48" y1="615" x2="1392" y2="615" stroke="#2d4257"/>
+<text x="48" y="656" fill="#f1f5f9" font-size="21" font-weight="700">Project folder by default</text>
+<text x="48" y="688" class="small">Worktrees are an explicit choice.</text>
+<text x="525" y="656" fill="#f1f5f9" font-size="21" font-weight="700">Persistent conversations</text>
+<text x="525" y="688" class="small">Each assignment keeps its own report.</text>
+<text x="1005" y="656" fill="#f1f5f9" font-size="21" font-weight="700">Claude remains in control</text>
+<text x="1005" y="688" class="small">Worker completion still needs verification.</text>
+<text x="48" y="745" class="small">Architecture overview · External workers use plugin tools; they are separate from Claude’s native Agent runtime.</text>
+</svg>

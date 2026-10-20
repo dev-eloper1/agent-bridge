@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-20T01:35:03.051Z",
+  "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-claude-plugin-eYAavR",
+  "exitCode": 0,
+  "mode": "installed-plugin",
+  "tools": [
+    {
+      "name": "Skill",
+      "skill": "agent-bridge:delegate"
+    },
+    {
+      "name": "ToolSearch"
+    },
+    {
+      "name": "mcp__plugin_agent-bridge_workers__agents_run",
+      "agentId": "pi-reviewer",
+      "workspace": {
+        "mode": "project"
+      }
+    }
+  ],
+  "result": "Pi read `fixture.txt` and says the exact label is:\n\n**`PLUGIN-17230cf888`**\n\nPi reported that this label is the whole file, a single line. The task log shows Pi made one read of `fixture.txt` and nothing else, so it changed no files. I didn't run any shell commands or check the file myself.",
+  "modStatusObserved": [
+    "Workers idle · /workers",
+    "pi · Read fixture.txt label · Preparing result",
+    "pi · Read fixture.txt label · Reviewing results"
+  ],
+  "tasks": [
+    {
+      "taskId": "task_f3351f0b-4e0e-4b56-935e-415cde52dbf1",
+      "agentId": "pi-reviewer",
+      "status": "completed",
+      "summary": "pi v1.3.0\n---\n\n## Skills\n- /Users/bhushan/.agents/skills/visual-storytelling/SKILL.md\n- /Users/bhushan/.agents/skills/cmux/SKILL.md\n\n## Extensions\n- npm:pi-lmstudio\n  - index.ts\nExact label: `PLUGIN-17230cf888`\n\nFull file contents:\n```text\nPLUGIN-17230cf888\n```",
+      "workspace": {
+        "mode": "project"
+      },
+      "cwd": "/private/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-claude-plugin-eYAavR",
+      "recentActivity": [
+        {
+          "toolCallId": "call_12fb362634c14c70b62a498e71d93f2b|fc_0376957e4ccc14e8016ad6c53f80a481939dad7ab1153e7c87",
+          "title": "read",
+          "status": "completed",
+          "timestamp": "2026-10-20T01:34:55.588Z",
+          "kind": "read",
+          "paths": [
+            "fixture.txt"
+          ]
+        }
+      ],
+      "execution": "foreground",
+      "description": "Read fixture.txt label"
+    }
+  ],
+  "outcome": "passed"
+}

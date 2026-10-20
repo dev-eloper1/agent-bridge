@@ -1,0 +1,17 @@
+{
+  "name": "agent-bridge-local",
+  "owner": {
+    "name": "Agent Bridge"
+  },
+  "plugins": [
+    {
+      "name": "agent-bridge",
+      "source": "./",
+      "description": "Persistent external coding workers inside Claude Code",
+      "version": "0.5.2"
+    }
+  ],
+  "metadata": {
+    "description": "Local persistent external coding workers for Claude Code"
+  }
+}

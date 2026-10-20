@@ -1,0 +1,756 @@
+{
+  "providers": {
+    "pi": {
+      "testedAt": "2026-10-19T23:44:18.474Z",
+      "provider": "pi",
+      "steps": [
+        {
+          "stage": "first",
+          "taskId": "task_0adf2f4d-5345-4b22-873b-9024752ba2a0",
+          "status": "completed",
+          "dispatchMs": 18,
+          "elapsedMs": 3862,
+          "summary": "pi v1.3.0\n---\n\n## Skills\n- /Users/bhushan/.agents/skills/visual-storytelling/SKILL.md\n- /Users/bhushan/.agents/skills/cmux/SKILL.md\n\n## Extensions\n- npm:pi-lmstudio\n  - index.ts\nACK",
+          "modelId": "openai-codex/gpt-5.6-luna",
+          "usage": {
+            "used": 1094,
+            "size": 272000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "continuity",
+          "taskId": "task_c1a4a9f7-af75-44fd-8db5-474fb1f68f11",
+          "status": "completed",
+          "dispatchMs": 12,
+          "elapsedMs": 1034,
+          "summary": "bridge-7e2a46e224",
+          "modelId": "openai-codex/gpt-5.6-luna",
+          "usage": {
+            "used": 1144,
+            "size": 272000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "recovery",
+          "taskId": "task_a1bd4e83-805a-4355-bd62-5cab3cdd7d3f",
+          "status": "completed",
+          "dispatchMs": 11,
+          "elapsedMs": 1510,
+          "summary": "bridge-7e2a46e224",
+          "modelId": "openai-codex/gpt-5.6-luna",
+          "usage": {
+            "used": 1194,
+            "size": 272000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "review",
+          "taskId": "task_c0e9fd42-582d-4117-87ea-815713fa16f4",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 2827,
+          "summary": "`answer.js` is defective because `sum` always throws `\"not implemented\"` instead of returning the arithmetic result. The tests require addition, including positive, negative, and zero values.\n\n```js\nexport function sum(a, b) {\n  return a + b;\n}\n```",
+          "modelId": "openai-codex/gpt-5.6-luna",
+          "usage": {
+            "used": 1546,
+            "size": 272000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        }
+      ],
+      "permissions": [],
+      "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-pi-xV1g30",
+      "cliVersion": "1.3.0",
+      "availability": "installed",
+      "command": "/Users/bhushan/Documents/Projects/agent-bridge/node_modules/.bin/pi-acp",
+      "capabilities": {
+        "loadSession": true,
+        "mcpCapabilities": {
+          "http": false,
+          "sse": false
+        },
+        "promptCapabilities": {
+          "image": true,
+          "audio": false,
+          "embeddedContext": false
+        },
+        "sessionCapabilities": {
+          "list": {},
+          "delete": {}
+        }
+      },
+      "models": {
+        "currentModelId": "openai-codex/gpt-5.6-luna",
+        "count": 9
+      },
+      "nativeSessionId": "01a1568d-3c2b-7091-815d-f59208ea0767",
+      "continuity": "passed",
+      "recovery": "passed",
+      "review": "passed",
+      "coding": "not attempted: Pi is restricted to read-only tools",
+      "outcome": "passed"
+    },
+    "codex": {
+      "testedAt": "2026-10-19T23:42:14.566Z",
+      "provider": "codex",
+      "steps": [
+        {
+          "stage": "first",
+          "taskId": "task_e361b3c4-fab9-41de-8edc-0845a5630f5d",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 5141,
+          "summary": "ACK",
+          "modelId": "gpt-6.1-sol[medium]",
+          "usage": {
+            "used": 17658,
+            "size": 475000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "continuity",
+          "taskId": "task_bf3eced6-11c2-4bb5-bde8-ee6517c84dd5",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 1234,
+          "summary": "bridge-2b70e6139c",
+          "modelId": "gpt-6.1-sol[medium]",
+          "usage": {
+            "used": 17708,
+            "size": 475000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "recovery",
+          "taskId": "task_6f8c7442-01ed-453c-9ea9-6cb9b454b8fd",
+          "status": "completed",
+          "dispatchMs": 12,
+          "elapsedMs": 3509,
+          "summary": "bridge-2b70e6139c",
+          "modelId": "gpt-6.1-sol[medium]",
+          "usage": {
+            "used": 17758,
+            "size": 475000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "coding",
+          "taskId": "task_4c1d4cfe-7842-4f92-9bf6-55041c1de15a",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 6605,
+          "summary": "I’ll replace the stub in answer.js with the exact function.\nDONE",
+          "modelId": "gpt-6.1-sol[medium]",
+          "usage": {
+            "used": 18039,
+            "size": 475000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        }
+      ],
+      "permissions": [],
+      "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-codex-SKzpxZ",
+      "cliVersion": "codex-cli 0.163.0",
+      "availability": "installed",
+      "command": "/Users/bhushan/Documents/Projects/agent-bridge/node_modules/.bin/codex-acp",
+      "capabilities": {
+        "auth": {
+          "logout": {}
+        },
+        "providers": {},
+        "loadSession": true,
+        "promptCapabilities": {
+          "embeddedContext": true,
+          "image": true
+        },
+        "sessionCapabilities": {
+          "resume": {},
+          "list": {},
+          "close": {},
+          "delete": {},
+          "fork": {},
+          "additionalDirectories": {},
+          "subagents": {}
+        },
+        "mcpCapabilities": {
+          "acp": false,
+          "http": true,
+          "sse": false
+        },
+        "_meta": {
+          "authStatus": {}
+        }
+      },
+      "models": {
+        "currentModelId": "gpt-6.1-sol[medium]",
+        "count": 40
+      },
+      "nativeSessionId": "01a1568b-5943-71d1-94e3-dfc4ae8458af",
+      "continuity": "passed",
+      "recovery": "passed",
+      "verificationOutput": "✔ sum (0.343333ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 42.927667\n",
+      "coding": "passed: independent node --test",
+      "outcome": "passed"
+    },
+    "claude": {
+      "testedAt": "2026-10-19T23:37:23.391Z",
+      "provider": "claude",
+      "steps": [
+        {
+          "stage": "first",
+          "taskId": "task_4c9cd75e-b6f4-48d2-aa6b-d8b3f0130dde",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 2602,
+          "summary": "ACK",
+          "usage": {
+            "used": 32637,
+            "size": 1000000,
+            "cost": {
+              "amount": 0.1662476,
+              "currency": "USD"
+            },
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "continuity",
+          "taskId": "task_83161d00-7495-4e2b-9467-720a5f7212ae",
+          "status": "completed",
+          "dispatchMs": 11,
+          "elapsedMs": 1295,
+          "summary": "bridge-c65fc0f9f6",
+          "usage": {
+            "used": 38145,
+            "size": 1000000,
+            "cost": {
+              "amount": 0.35743440000000004,
+              "currency": "USD"
+            },
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "recovery",
+          "taskId": "task_b8904fe4-fdae-4229-a591-43794a2e0518",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 2406,
+          "summary": "bridge-c65fc0f9f6",
+          "usage": {
+            "used": 39153,
+            "size": 1000000,
+            "cost": {
+              "amount": 0.058499800000000005,
+              "currency": "USD"
+            },
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "coding",
+          "taskId": "task_e2aececb-5c02-446f-8850-80c8b7e4966f",
+          "status": "completed",
+          "dispatchMs": 9,
+          "elapsedMs": 6251,
+          "summary": "DONE",
+          "usage": {
+            "used": 45357,
+            "size": 1000000,
+            "cost": {
+              "amount": 0.1501526,
+              "currency": "USD"
+            },
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        }
+      ],
+      "permissions": [],
+      "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-claude-Qn96uF",
+      "cliVersion": "2.1.304 (Claude Code)",
+      "availability": "installed",
+      "command": "/Users/bhushan/Documents/Projects/agent-bridge/node_modules/.bin/claude-agent-acp",
+      "capabilities": {
+        "_meta": {
+          "claudeCode": {
+            "promptQueueing": true
+          },
+          "authStatus": {}
+        },
+        "promptCapabilities": {
+          "image": true,
+          "embeddedContext": true
+        },
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "auth": {
+          "logout": {}
+        },
+        "providers": {},
+        "loadSession": true,
+        "sessionCapabilities": {
+          "additionalDirectories": {},
+          "close": {},
+          "delete": {},
+          "fork": {},
+          "list": {},
+          "resume": {},
+          "systemPrompt": {
+            "mode": {
+              "override": {}
+            }
+          }
+        }
+      },
+      "models": {},
+      "nativeSessionId": "cf49a5bd-028d-442f-a1a5-0a87211165d5",
+      "continuity": "passed",
+      "recovery": "passed",
+      "verificationOutput": "✔ sum (0.326584ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 43.132208\n",
+      "coding": "passed: independent node --test",
+      "outcome": "passed"
+    },
+    "opencode": {
+      "testedAt": "2026-10-19T23:37:36.281Z",
+      "provider": "opencode",
+      "steps": [
+        {
+          "stage": "first",
+          "taskId": "task_f3d09773-99d4-4909-90af-315afd3eb394",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 1615,
+          "summary": "ACK",
+          "usage": {
+            "used": 8904,
+            "size": 1000000,
+            "cost": {
+              "amount": 0,
+              "currency": "USD"
+            },
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "continuity",
+          "taskId": "task_bc14e61b-1686-4abb-8276-a555b354d8f4",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 978,
+          "summary": "bridge-ed6518306a",
+          "usage": {
+            "used": 9564,
+            "size": 1000000,
+            "cost": {
+              "amount": 0,
+              "currency": "USD"
+            },
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "recovery",
+          "taskId": "task_f155a7f4-a58d-4e5b-82c2-08d82aaf23de",
+          "status": "completed",
+          "dispatchMs": 9,
+          "elapsedMs": 1598,
+          "summary": "bridge-ed6518306a",
+          "usage": {
+            "used": 9671,
+            "size": 1000000,
+            "cost": {
+              "amount": 0,
+              "currency": "USD"
+            },
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "coding",
+          "taskId": "task_00057102-70de-40b4-8e96-8086806d9afb",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 5380,
+          "summary": "DONE",
+          "usage": {
+            "used": 10846,
+            "size": 1000000,
+            "cost": {
+              "amount": 0,
+              "currency": "USD"
+            },
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        }
+      ],
+      "permissions": [],
+      "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-opencode-C1ihgI",
+      "cliVersion": "opencode v2.0.32",
+      "availability": "installed",
+      "command": "/Users/bhushan/.opencode/bin/opencode",
+      "capabilities": {
+        "loadSession": true,
+        "mcpCapabilities": {
+          "http": true,
+          "sse": false
+        },
+        "promptCapabilities": {
+          "embeddedContext": true,
+          "image": true
+        },
+        "sessionCapabilities": {
+          "additionalDirectories": {},
+          "close": {},
+          "delete": {},
+          "fork": {},
+          "list": {},
+          "resume": {}
+        },
+        "_meta": {
+          "opencode/child-session-updates": true
+        }
+      },
+      "models": {},
+      "nativeSessionId": "ses_ea978e629ffeU2dhit3y8LTyJc",
+      "continuity": "passed",
+      "recovery": "passed",
+      "verificationOutput": "✔ sum (0.33075ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 42.418125\n",
+      "coding": "passed: independent node --test",
+      "outcome": "passed"
+    },
+    "cursor": {
+      "testedAt": "2026-10-19T23:37:46.225Z",
+      "provider": "cursor",
+      "steps": [
+        {
+          "stage": "first",
+          "taskId": "task_278f5756-3675-49bf-83c6-d9e2c76098ef",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 6283,
+          "summary": "ACK",
+          "modelId": "default[]",
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "continuity",
+          "taskId": "task_3d014b18-b8b4-4b26-9f44-190c7ec677d3",
+          "status": "completed",
+          "dispatchMs": 8,
+          "elapsedMs": 1590,
+          "summary": "bridge-aee462f1be",
+          "modelId": "default[]",
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "recovery",
+          "taskId": "task_05a8c199-37ee-4d7d-9c64-630321c5ed5a",
+          "status": "completed",
+          "dispatchMs": 13,
+          "elapsedMs": 5954,
+          "summary": "bridge-aee462f1be",
+          "modelId": "default[]",
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "coding",
+          "taskId": "task_a94202bf-223a-4955-a9dc-ba5f4c97881a",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 4871,
+          "summary": "I'll update `answer.js` with the exact `sum` export you specified.DONE",
+          "modelId": "default[]",
+          "stopReason": "end_turn"
+        }
+      ],
+      "permissions": [],
+      "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-cursor-5TrqdN",
+      "cliVersion": "2026.10.18-ea085cb",
+      "availability": "installed",
+      "command": "/Users/bhushan/.local/bin/agent",
+      "capabilities": {
+        "loadSession": true,
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "promptCapabilities": {
+          "audio": false,
+          "embeddedContext": false,
+          "image": true
+        },
+        "sessionCapabilities": {
+          "list": {}
+        }
+      },
+      "models": {
+        "currentModelId": "default[]",
+        "count": 46
+      },
+      "nativeSessionId": "b0703042-646c-4763-895a-02cc9cc50b02",
+      "continuity": "passed",
+      "recovery": "passed",
+      "verificationOutput": "✔ sum (0.352958ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 46.065166\n",
+      "coding": "passed: independent node --test",
+      "outcome": "passed"
+    },
+    "devin": {
+      "testedAt": "2026-10-19T23:38:05.529Z",
+      "provider": "devin",
+      "steps": [
+        {
+          "stage": "first",
+          "taskId": "task_60ec52e8-5826-4019-b8da-315511d2537f",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 2257,
+          "summary": "ACK",
+          "usage": {
+            "used": 13381,
+            "size": 200000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "continuity",
+          "taskId": "task_bed95485-69c5-4444-8b5f-f6c962d3e541",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 1286,
+          "summary": "bridge-5865c70dcc",
+          "usage": {
+            "used": 13426,
+            "size": 200000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "recovery",
+          "taskId": "task_f78fe734-5aaa-4670-9161-737013761828",
+          "status": "completed",
+          "dispatchMs": 13,
+          "elapsedMs": 1192,
+          "summary": "bridge-5865c70dcc",
+          "usage": {
+            "used": 13425,
+            "size": 200000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "coding",
+          "taskId": "task_9a2d22dc-c4a6-443f-ab19-1039909bb31c",
+          "status": "completed",
+          "dispatchMs": 9,
+          "elapsedMs": 4684,
+          "summary": "DONE",
+          "usage": {
+            "used": 14124,
+            "size": 200000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        }
+      ],
+      "permissions": [],
+      "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-devin-6hyExd",
+      "cliVersion": "devin 3000.11.92 (7f4e64980e22)",
+      "availability": "installed",
+      "command": "/Users/bhushan/.local/bin/devin",
+      "capabilities": {
+        "loadSession": true,
+        "promptCapabilities": {
+          "image": true,
+          "audio": false,
+          "embeddedContext": true
+        },
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "sessionCapabilities": {
+          "list": {},
+          "delete": {},
+          "additionalDirectories": {},
+          "close": {
+            "_meta": {
+              "cognition.ai/force": true
+            }
+          }
+        },
+        "auth": {},
+        "_meta": {
+          "cognition.ai/multiRootWorkspace": true,
+          "cognition.ai/sessionListContentSearch": true,
+          "cognition.ai/sessionListOrderBy": [
+            "updated_at",
+            "created_at"
+          ],
+          "cognition.ai/sessionRename": true,
+          "cognition.ai/persistOnCreate": true,
+          "cognition.ai/sessionShare": true,
+          "cognition.ai/documentLifecycle": true,
+          "cognition.ai/userEdits": true,
+          "cognition.ai/terminalLifecycle": true,
+          "cognition.ai/userConfig": true,
+          "cognition.ai/userShellCommand": true,
+          "cognition.ai/editableCommands": true,
+          "cognition.ai/commandRevision": true,
+          "cognition.ai/chains": true,
+          "cognition.ai/megaplan": true,
+          "cognition.ai/ruleMentions": true,
+          "cognition.ai/midTurnPrompts": true
+        }
+      },
+      "models": {
+        "currentModelId": "swe-1-6-slow",
+        "count": 1,
+        "source": "config_option_update in recorded smoke artifacts"
+      },
+      "nativeSessionId": "classic-ladybug",
+      "continuity": "passed",
+      "recovery": "passed",
+      "verificationOutput": "✔ sum (0.306959ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 43.47175\n",
+      "coding": "passed: independent node --test",
+      "outcome": "passed"
+    },
+    "copilot": {
+      "testedAt": "2026-10-20T00:15:33.131Z",
+      "provider": "copilot",
+      "steps": [
+        {
+          "stage": "first",
+          "taskId": "task_ec3387e8-16a0-4773-8e28-1b4f0d47f68d",
+          "status": "completed",
+          "dispatchMs": 16,
+          "elapsedMs": 5993,
+          "summary": "ACK",
+          "modelId": "auto",
+          "usage": {
+            "used": 13293,
+            "size": 128000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "continuity",
+          "taskId": "task_21db65c4-b4ff-49e7-97f8-3d2a39db5263",
+          "status": "completed",
+          "dispatchMs": 10,
+          "elapsedMs": 5454,
+          "summary": "bridge-c2f6148bb0",
+          "modelId": "auto",
+          "usage": {
+            "used": 13359,
+            "size": 128000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "recovery",
+          "taskId": "task_1c2b586d-935a-4c37-bca6-e16bf2289f34",
+          "status": "completed",
+          "dispatchMs": 11,
+          "elapsedMs": 4094,
+          "summary": "bridge-c2f6148bb0",
+          "modelId": "auto",
+          "usage": {
+            "used": 13432,
+            "size": 128000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        },
+        {
+          "stage": "coding",
+          "taskId": "task_8d409cb1-9203-4ac4-ab43-e2a74ef6b3fc",
+          "status": "completed",
+          "dispatchMs": 9,
+          "elapsedMs": 10594,
+          "summary": "DONE",
+          "modelId": "auto",
+          "usage": {
+            "used": 14308,
+            "size": 128000,
+            "attribution": "provider-reported cumulative session metadata, not task invoice cost"
+          },
+          "stopReason": "end_turn"
+        }
+      ],
+      "permissions": [
+        {
+          "stage": "coding",
+          "kind": "permission",
+          "toolKind": "edit",
+          "decision": "scoped-file-edit",
+          "questionId": "question_a95907fc-43a6-4c03-9474-51d39a7ee091"
+        }
+      ],
+      "artifacts": "/var/folders/g3/8vwglwy12f14n12g0hb_hyvh0000gn/T/ab-copilot-8dc904",
+      "cliVersion": "GitHub Copilot CLI 1.0.100.",
+      "availability": "installed",
+      "command": "/Users/bhushan/.local/bin/copilot",
+      "capabilities": {
+        "auth": {
+          "logout": {}
+        },
+        "loadSession": true,
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "promptCapabilities": {
+          "image": true,
+          "audio": false,
+          "embeddedContext": true
+        },
+        "sessionCapabilities": {
+          "close": {},
+          "list": {}
+        }
+      },
+      "models": {
+        "currentModelId": "auto",
+        "count": 2
+      },
+      "nativeSessionId": "7f9b55e2-885a-4f8f-91e4-335898db06c1",
+      "continuity": "passed",
+      "recovery": "passed",
+      "verificationOutput": "✔ sum (0.363459ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 44.411625\n",
+      "coding": "passed: independent node --test",
+      "outcome": "passed"
+    }
+  },
+  "date": "2026-10-20T00:15:33.130Z",
+  "platform": "darwin",
+  "node": "v26.2.0"
+}
