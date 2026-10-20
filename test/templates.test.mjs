@@ -80,7 +80,7 @@ async function finish(runtime, args) {
   }
   throw Error("Task did not finish");
 }
-test("saved definitions resolve project/global precedence and create never overwrites", () => {
+test("saved definitions refuse ambiguous project/global names and create never overwrites", () => {
   const f = fixture();
   createTemplate(f.roots, "global", baseDefinition);
   assert.equal(resolveTemplate(f.roots, "reviewer").scope, "global");
@@ -88,7 +88,15 @@ test("saved definitions resolve project/global precedence and create never overw
     ...baseDefinition,
     instructions: "PROJECT",
   });
-  assert.equal(resolveTemplate(f.roots, "reviewer").instructions, "PROJECT");
+  // A repository definition must not silently shadow the user's global one.
+  assert.throws(
+    () => resolveTemplate(f.roots, "reviewer"),
+    /both project and global scope/,
+  );
+  assert.equal(
+    resolveTemplate(f.roots, "project:reviewer").instructions,
+    "PROJECT",
+  );
   assert.equal(
     resolveTemplate(f.roots, "global:reviewer").instructions,
     "ORIGINAL_INSTRUCTIONS",

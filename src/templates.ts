@@ -84,6 +84,21 @@ export function resolveTemplate(
   const scopes = scopeHint
     ? [scopeHint as "project" | "global"]
     : (["project", "global"] as const);
+  // Repository content must not silently shadow a user-owned global definition.
+  if (
+    !scopeHint &&
+    scopes.every((scope) => {
+      try {
+        lstatSync(path.join(roots[scope], requestedId));
+        return true;
+      } catch {
+        return false;
+      }
+    })
+  )
+    throw Error(
+      `Agent definition ${requestedId} exists in both project and global scope; use project:${requestedId} or global:${requestedId}`,
+    );
   for (const scope of scopes) {
     const directory = path.join(roots[scope], requestedId);
     // lstat observes dangling links; a broken project override must not fall through to global.
