@@ -1,0 +1,96 @@
+{
+  "date": "2026-10-20T14:04:29.846Z",
+  "sdk": "2.0.0/v1-unstable",
+  "modelPrompts": 0,
+  "providers": {
+    "pi": {
+      "version": "1.3.0",
+      "initialized": true,
+      "loadSession": true,
+      "experimentalSystemPrompt": null,
+      "mcpCapabilities": {
+        "http": false,
+        "sse": false
+      },
+      "readOnlyProfile": true,
+      "interpretation": "Advertised initialization capabilities only; not a behavioral test or authentication/entitlement guarantee"
+    },
+    "codex": {
+      "version": "codex-cli 0.163.0",
+      "initialized": true,
+      "loadSession": true,
+      "experimentalSystemPrompt": null,
+      "mcpCapabilities": {
+        "acp": false,
+        "http": true,
+        "sse": false
+      },
+      "readOnlyProfile": false,
+      "interpretation": "Advertised initialization capabilities only; not a behavioral test or authentication/entitlement guarantee"
+    },
+    "claude": {
+      "version": "2.1.304 (Claude Code)",
+      "initialized": true,
+      "loadSession": true,
+      "experimentalSystemPrompt": {
+        "mode": {
+          "override": {}
+        }
+      },
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "readOnlyProfile": false,
+      "interpretation": "Advertised initialization capabilities only; not a behavioral test or authentication/entitlement guarantee"
+    },
+    "opencode": {
+      "version": "opencode v2.0.32",
+      "initialized": true,
+      "loadSession": true,
+      "experimentalSystemPrompt": null,
+      "mcpCapabilities": {
+        "http": true,
+        "sse": false
+      },
+      "readOnlyProfile": false,
+      "interpretation": "Advertised initialization capabilities only; not a behavioral test or authentication/entitlement guarantee"
+    },
+    "cursor": {
+      "version": "2026.10.18-ea085cb",
+      "initialized": true,
+      "loadSession": true,
+      "experimentalSystemPrompt": null,
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "readOnlyProfile": false,
+      "interpretation": "Advertised initialization capabilities only; not a behavioral test or authentication/entitlement guarantee"
+    },
+    "devin": {
+      "version": "devin 3000.11.92 (7f4e64980e22)",
+      "initialized": true,
+      "loadSession": true,
+      "experimentalSystemPrompt": null,
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "readOnlyProfile": false,
+      "interpretation": "Advertised initialization capabilities only; not a behavioral test or authentication/entitlement guarantee"
+    },
+    "copilot": {
+      "version": "GitHub Copilot CLI 1.0.100.",
+      "initialized": true,
+      "loadSession": true,
+      "experimentalSystemPrompt": null,
+      "mcpCapabilities": {
+        "http": true,
+        "sse": true
+      },
+      "readOnlyProfile": false,
+      "interpretation": "Advertised initialization capabilities only; not a behavioral test or authentication/entitlement guarantee"
+    }
+  }
+}

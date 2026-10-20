@@ -50,7 +50,7 @@ test("Claude plugin autostarts one project daemon, reconnects to persistent task
   try {
     [one, two] = await Promise.all([connect(dir), connect(dir)]);
     const pid = readFileSync(path.join(dir, ".agent-bridge/lock/pid"), "utf8");
-    assert.equal((await one.listTools()).tools.length, 11);
+    assert.equal((await one.listTools()).tools.length, 14);
     const first = await tool(one, "spawn", {
       agentId: "demo",
       prompt: "remember plugin marker",

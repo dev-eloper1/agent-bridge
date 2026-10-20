@@ -5,7 +5,7 @@ import {
   type InitializeResponse,
   type NewSessionResponse,
   type LoadSessionResponse,
-} from "@agentclientprotocol/sdk";
+} from "@agentclientprotocol/sdk/unstable";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import path from "node:path";
@@ -120,7 +120,25 @@ export class Worker {
   async session(
     cwd: string,
     nativeSessionId?: string,
+    systemInstructions?: string,
   ): Promise<NewSessionResponse | LoadSessionResponse> {
+    // SDK 2.0.0's pinned v1 unstable schema is needed for this opt-in RFD field.
+    // Ordinary sessions retain their existing v1 requests and no new fields.
+    if (
+      systemInstructions &&
+      !this.init?.agentCapabilities?.sessionCapabilities?.systemPrompt
+    )
+      throw Error(
+        "Backend does not advertise experimental ACP systemPrompt; choose a compatible harness or explicitly use task-instructions",
+      );
+    const system = systemInstructions
+      ? {
+          systemPrompt: {
+            mode: "append",
+            content: [{ type: "text" as const, text: systemInstructions }],
+          },
+        }
+      : {};
     if (nativeSessionId) {
       if (!this.init?.agentCapabilities?.loadSession)
         throw Error(
@@ -130,11 +148,13 @@ export class Worker {
         sessionId: nativeSessionId,
         cwd,
         mcpServers: [],
+        ...system,
       });
     }
     return this.connection.agent.request("session/new", {
       cwd,
       mcpServers: [],
+      ...system,
     });
   }
   prompt(sessionId: string, text: string) {

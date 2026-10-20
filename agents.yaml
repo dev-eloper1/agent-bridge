@@ -33,7 +33,7 @@ providers:
     args: []
     requires: [claude]
     env:
-      CLAUDE_CODE_EXECUTABLE: ~/.local/bin/claude
+      CLAUDE_CODE_EXECUTABLE: claude
       CMUX_CLAUDE_HOOKS_DISABLED: "1"
     envPaths: [CLAUDE_CODE_EXECUTABLE]
     envNames: [CLAUDE_CONFIG_DIR, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN]

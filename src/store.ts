@@ -18,6 +18,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Workspace, WorkspaceIdentity } from "./workspaces.js";
 import { z } from "zod";
+import { templateSnapshot, type TemplateSnapshot } from "./templates.js";
 export const uid = (prefix: string) => `${prefix}_${randomUUID()}`;
 export const now = () => new Date().toISOString();
 export type Status =
@@ -42,6 +43,7 @@ export interface Session {
   models?: unknown;
   recovery?: string;
   fingerprint: string;
+  template?: TemplateSnapshot;
 }
 export interface Task {
   taskId: string;
@@ -60,6 +62,14 @@ export interface Task {
   execution?: "foreground" | "background";
   acceptanceCriteria: string[];
   verification: "pending";
+  template?: {
+    id: string;
+    name: string;
+    version: string;
+    digest: string;
+    scope: string;
+    delivery: string;
+  };
   provider?: string;
   modelId?: string;
   usage?: { used?: number; size?: number; cost?: unknown; attribution: string };
@@ -140,6 +150,7 @@ const storedState = z
             .optional(),
           agentId: z.string(),
           fingerprint: z.string(),
+          template: templateSnapshot.optional(),
           workspaceIdentity: z
             .object({
               canonicalPath: z.string(),

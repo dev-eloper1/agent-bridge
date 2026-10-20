@@ -80,7 +80,7 @@ The daemon is independent of Claude and the MCP facade. Closing Claude's tool co
 These are separate concepts:
 
 - **provider**: executable/adapter configuration, such as `devin` or `codex`.
-- **agentId**: configured logical worker, such as `devin-worker`. One owner serializes all its tasks across workspace conversations.
+- **agentId**: configured logical worker, such as `devin-worker`. Each conversation of a worker gets its own process; turns within a conversation serialize, and separate conversations run in parallel.
 - **agentSessionId**: bridge conversation ID bound to a worker and workspace; persists across tasks and daemon restarts. Pass it on follow-up dispatches.
 - **nativeSessionId**: the backend's ACP conversation ID. The bridge stores the mapping and checks load support.
 - **taskId**: one job, including up to two queued steering turns. A later job gets another taskId and fresh context by default; an explicit follow-up passes agentSessionId to retain the selected conversation.
@@ -115,7 +115,7 @@ sequenceDiagram
   D-->>C: Bounded summary + artifact references
 ```
 
-Dispatch persists before scheduling and returns without waiting for the model. The live tests observed dispatch in tens of milliseconds. `maxConcurrentTasks` bounds simultaneous logical workers; tasks for one agent serialize. A caller-supplied taskKey de-duplicates dispatch for that agent. Omit it for a new job, or reuse it when retrying a lost dispatch response.
+Dispatch persists before scheduling and returns without waiting for the model. The live tests observed dispatch in tens of milliseconds. `maxConcurrentTasks` bounds simultaneous tasks; turns within one conversation serialize, while separate conversations on the same agent run in parallel. At most one idle process per agent is kept. A caller-supplied taskKey de-duplicates dispatch for that agent. Omit it for a new job, or reuse it when retrying a lost dispatch response.
 
 Actual task states:
 
@@ -156,7 +156,7 @@ Workers use the project folder by default, without Git setup. Project mode inclu
 
 `agents_spawn.workspace` selects `project`, `directory` (existing canonical path), `temporary` (fresh private scratch folder), or `isolated-worktree` (explicit isolation from committed HEAD). Omit the field to use the configured profile default; shipped writable profiles now default to `project`, and the skill selects project explicitly for ordinary new tasks, including with older generated configs. The legacy `read-only` profile still uses the project folder and requires provider-side read restrictions.
 
-A conversation remains bound to its workspace. Every new task creates fresh context, including in the same canonical directory; only an explicit `agentSessionId` resumes. Each new temporary task creates a new scratch folder. Follow-ups omit `workspace`. Switching between workspace conversations replaces the worker process and loads the selected native session, failing explicitly if load is unsupported. Tasks still serialize per logical worker, so a process never handles two workspace conversations concurrently. Task status/results include the selected workspace and resolved `cwd`; `agents_list` exposes conversation IDs/folders for discovery. Existing state keys and conversation fingerprints remain compatible; old worktree conversations can be continued explicitly by ID.
+A conversation remains bound to its workspace. Every new task creates fresh context, including in the same canonical directory; only an explicit `agentSessionId` resumes. Each new temporary task creates a new scratch folder. Follow-ups omit `workspace`. Each conversation runs in its own worker process; resuming a conversation whose process was evicted starts a new process and loads the selected native session, failing explicitly if load is unsupported. A process never handles two conversations, so separate conversations can run concurrently. Task status/results include the selected workspace and resolved `cwd`; `agents_list` exposes conversation IDs/folders for discovery. Existing state keys and conversation fingerprints remain compatible; old worktree conversations can be continued explicitly by ID.
 
 Scratch folders persist under `.agent-bridge/scratch/<agentSessionId>/`. The bridge never deletes them automatically. Explicit worktrees live under `.agent-bridge/worktrees/<agentSessionId>/`; only they require Git HEAD, generate `diff.patch` and record Git workspace status. Worktree patches cover tracked changes relative to HEAD; untracked files are listed separately. The coordinator controls integration. Project/directory/scratch modes do not attempt Git operations or manufacture a diff artifact.
 

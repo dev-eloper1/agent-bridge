@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Bridge · Workbench</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <aside class="rail">
+      <a class="brand" href="#">ab<span> / </span></a>
+      <div class="rail-label">WORKSPACE</div>
+      <nav>
+        <button class="nav active" data-view="library">
+          ◈ &nbsp; Agent library <span id="definition-count">0</span></button
+        ><button class="nav" data-view="workers">
+          ◎ &nbsp; Workers &amp; history
+        </button>
+      </nav>
+      <div class="rail-label future-label">NEXT CHAPTER</div>
+      <div class="future">
+        ↳ Workflow recipes<br />↳ Evaluations &amp; comparisons
+      </div>
+      <div class="rail-foot">
+        <span class="live-dot"></span> Local runtime<br /><small
+          >One store. One execution engine.</small
+        >
+      </div>
+    </aside>
+    <main>
+      <header>
+        <div>
+          <div class="eyebrow">AGENT BRIDGE / WORKBENCH</div>
+          <h1 id="heading">A place for your specialists.</h1>
+          <p id="subheading">
+            Build reusable definitions. Keep conversations and task results in
+            view.
+          </p>
+        </div>
+        <div class="header-actions">
+          <button id="refresh" class="quiet">↻ Refresh</button
+          ><button id="create" class="primary">＋ Create agent</button>
+        </div>
+      </header>
+      <div class="project-line">
+        <span class="live-dot"></span
+        ><span id="project">Connecting to your project…</span
+        ><span class="pill">LOCAL ONLY</span>
+      </div>
+      <div id="notice" role="status" hidden></div>
+      <section id="library">
+        <div class="section-title">
+          <h2>Agent library <span id="library-count"></span></h2>
+          <span>Definitions, ready for a new conversation.</span>
+        </div>
+        <div id="definition-list" class="cards"></div>
+        <div class="principle">
+          <span>01</span>
+          <div>
+            <h3>Start with the harness you already use.</h3>
+            <p>
+              A Claude-only setup works. Add other harnesses when useful.
+              Definitions, live conversations and individual tasks stay
+              separate.
+            </p>
+          </div>
+        </div>
+      </section>
+      <section id="workers" hidden>
+        <div class="section-title">
+          <h2>Workers &amp; history</h2>
+          <span>Project-wide runtime view · refresh to update</span>
+        </div>
+        <div id="worker-list" class="cards"></div>
+      </section>
+      <section id="details" hidden class="detail">
+        <div class="detail-top">
+          <button id="back" class="quiet">← Back to library</button
+          ><span id="detail-meta" class="pill"></span>
+        </div>
+        <h2 id="detail-name"></h2>
+        <p id="detail-description"></p>
+        <div class="binding-row">
+          <label for="binding">Check a harness binding</label
+          ><select id="binding">
+            <option value="">Choose a worker profile…</option>
+          </select>
+        </div>
+        <pre id="binding-result" hidden></pre>
+        <div class="reading-columns">
+          <article>
+            <div class="eyebrow">INSTRUCTIONS</div>
+            <div id="markdown" class="markdown"></div>
+          </article>
+          <div class="configuration">
+            <div class="eyebrow">RESOLVED DEFINITION</div>
+            <pre id="definition-json"></pre>
+          </div>
+        </div>
+      </section>
+      <section id="editor" hidden>
+        <div class="detail-top">
+          <button id="editor-back" class="quiet">← Back to library</button
+          ><span class="pill">NEW DEFINITION</span>
+        </div>
+        <h2>Create a specialist</h2>
+        <p class="muted">
+          Save a new definition. Existing definitions are never overwritten.
+        </p>
+        <form id="definition-form">
+          <div class="form-grid">
+            <label
+              >Name<input
+                id="name"
+                required
+                maxlength="80"
+                placeholder="Evidence-first reviewer" /></label
+            ><label
+              >Identifier<input
+                id="id"
+                required
+                maxlength="64"
+                pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                placeholder="evidence-reviewer" /></label
+            ><label>Version<input id="version" required value="1.0.0" /></label
+            ><label
+              >Save in<select id="scope">
+                <option value="project">This project</option>
+                <option value="global">Personal / all projects</option>
+              </select></label
+            >
+          </div>
+          <label
+            >When to use this agent<input
+              id="description"
+              required
+              maxlength="400"
+              placeholder="Review a change and distinguish reproduced findings from hypotheses."
+          /></label>
+          <div class="form-grid">
+            <label
+              >Instruction delivery<select id="delivery">
+                <option value="task-instructions">
+                  Task instructions · portable user context
+                </option>
+                <option value="system-append">
+                  System append · experimental, capability required
+                </option>
+              </select></label
+            ><label class="checkbox"
+              ><input type="checkbox" id="read-only" />Require a configured
+              read-only profile</label
+            >
+          </div>
+          <label
+            >Instructions · Markdown<textarea
+              id="instructions"
+              required
+              maxlength="12000"
+              rows="12"
+              placeholder="Describe the role, procedure, boundaries and expected output."
+            ></textarea>
+          </label>
+          <div class="editor-actions">
+            <button id="preview" type="button" class="quiet">
+              Preview Markdown</button
+            ><button class="primary" type="submit">Save definition →</button>
+          </div>
+          <div id="editor-preview" class="markdown" hidden></div>
+          <p class="footnote">
+            Saving does not launch a worker, install tools, change permissions
+            or grant new capabilities. Claude workers share your account’s usage
+            limits.
+          </p>
+        </form>
+      </section>
+      <section id="report" hidden>
+        <div class="detail-top">
+          <button id="report-back" class="quiet">← Back to workers</button
+          ><span id="report-status" class="pill"></span>
+        </div>
+        <h2 id="report-title"></h2>
+        <p id="report-meta" class="muted"></p>
+        <div class="report-pages">
+          <button id="report-prev" class="quiet">← Previous page</button
+          ><span id="page-label"></span
+          ><button id="report-next" class="quiet">Next page →</button>
+        </div>
+        <article id="report-body" class="markdown report-body"></article>
+        <p class="footnote">
+          Public provider output. Completion is separate from independent
+          verification.
+        </p>
+      </section>
+      <footer>
+        Persistent agents. Inspectable work.
+        <span
+          >Prototype · workflows and evals are planned, not active
+          controls.</span
+        >
+      </footer>
+    </main>
+  </body>
+</html>

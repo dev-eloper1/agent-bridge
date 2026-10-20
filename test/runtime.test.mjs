@@ -222,20 +222,32 @@ test("serial ownership, concurrency, cancel, runtime deadline and provider death
   const r = new Runtime(f.config);
   try {
     const a = await r.call("spawn", { agentId: "one", prompt: "SLOW" });
-    const b = await r.call("spawn", { agentId: "one", prompt: "next" });
+    // A fresh conversation on the same profile runs alongside, not behind, a.
+    const b = await r.call("spawn", { agentId: "one", prompt: "fresh" });
+    // A follow-up turn in a's conversation must wait for a.
+    const followup = await r.call("spawn", {
+      agentId: "one",
+      prompt: "next",
+      agentSessionId: a.agentSessionId,
+    });
     const c = await r.call("spawn", { agentId: "two", prompt: "parallel" });
     await until(
       () => r.call("status", { taskId: a.taskId }),
       (t) => t.status === "running",
     );
+    assert.equal((await done(r, b.taskId)).status, "completed");
     assert.equal(
-      (await r.call("status", { taskId: b.taskId })).status,
+      (await r.call("status", { taskId: followup.taskId })).status,
       "queued",
     );
     assert.equal((await done(r, c.taskId)).status, "completed");
+    assert.equal(
+      (await r.call("status", { taskId: a.taskId })).status,
+      "running",
+    );
     await r.call("cancel", { taskId: a.taskId });
     assert.equal((await done(r, a.taskId)).status, "cancelled");
-    assert.equal((await done(r, b.taskId)).status, "completed");
+    assert.equal((await done(r, followup.taskId)).status, "completed");
     const dead = await r.call("spawn", { agentId: "two", prompt: "CRASH" });
     assert.equal((await done(r, dead.taskId)).status, "failed");
     const next = await r.call("spawn", {
@@ -346,15 +358,17 @@ test("actual daemon crash preserves history/queue and MCP reconnect does not own
     });
     client = new Client({ name: "test", version: "1" });
     await client.connect(transport);
-    assert.equal((await client.listTools()).tools.length, 11);
+    assert.equal((await client.listTools()).tools.length, 14);
     const spawnResult = await client.callTool({
       name: "agents_spawn",
       arguments: { agentId: "one", prompt: "SLOW" },
     });
     const a = JSON.parse(spawnResult.content[0].text);
+    // Same conversation, so it stays queued behind a across the crash.
     const b = await remote(f.config, "spawn", {
       agentId: "one",
       prompt: "queued",
+      agentSessionId: a.agentSessionId,
     });
     await client.close();
     await until(

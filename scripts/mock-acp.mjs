@@ -1,5 +1,5 @@
 // Deterministic protocol fixture. No model endpoints and no workspace writes.
-import { agent, ndJsonStream } from "@agentclientprotocol/sdk";
+import { agent, ndJsonStream } from "@agentclientprotocol/sdk/unstable";
 import { Readable, Writable } from "node:stream";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -8,6 +8,7 @@ if (process.env.MOCK_PID_FILE)
   writeFileSync(process.env.MOCK_PID_FILE, String(process.pid));
 const sessions = {};
 const directories = {};
+const systems = {};
 const sessionFile = (id) => `${file}-${id}.json`;
 const save = (sessionId) => {
   if (file)
@@ -17,14 +18,25 @@ const cancelled = new Set();
 const app = agent({ name: "bridge-mock", version: "1" });
 app.onRequest("initialize", () => ({
   protocolVersion: 1,
-  agentCapabilities: { loadSession: !process.argv.includes("--no-load") },
+  agentCapabilities: {
+    loadSession: !process.argv.includes("--no-load"),
+    ...(process.argv.includes("--system-prompt")
+      ? { sessionCapabilities: { systemPrompt: {} } }
+      : {}),
+  },
   authMethods: [],
   agentInfo: { name: "mock", version: "1" },
 }));
-app.onRequest("session/new", ({ params: { cwd } }) => {
+app.onRequest("session/new", ({ params: { cwd, systemPrompt } }) => {
   const sessionId = randomUUID();
   sessions[sessionId] = [];
   directories[sessionId] = cwd;
+  systems[sessionId] = systemPrompt;
+  if (file && systemPrompt)
+    writeFileSync(
+      sessionFile(sessionId) + ".system",
+      JSON.stringify(systemPrompt),
+    );
   save(sessionId);
   return {
     sessionId,
@@ -38,7 +50,13 @@ app.onRequest("session/new", ({ params: { cwd } }) => {
 });
 app.onRequest(
   "session/load",
-  async ({ params: { sessionId, cwd }, client }) => {
+  async ({ params: { sessionId, cwd, systemPrompt }, client }) => {
+    systems[sessionId] = systemPrompt;
+    if (file && systemPrompt)
+      writeFileSync(
+        sessionFile(sessionId) + ".system",
+        JSON.stringify(systemPrompt),
+      );
     directories[sessionId] = cwd;
     if (file && existsSync(sessionFile(sessionId)))
       sessions[sessionId] = JSON.parse(
@@ -78,6 +96,8 @@ app.onRequest(
           content: { type: "text", text },
         },
       });
+    if (text.includes("CHECKSYSTEM"))
+      await update(JSON.stringify({ systemPrompt: systems[sessionId] }));
     if (text.includes("ERROROUTPUT")) {
       await update("Error: Execution failed: 400 fixture error");
       return { stopReason: "end_turn" };

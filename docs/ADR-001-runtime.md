@@ -8,7 +8,7 @@ acpx offers substantially more than a command wrapper, including named sessions,
 
 Atomic JSON snapshots are sufficient for this single-writer vertical slice. fsync + rename persist tasks, session mappings, and immutable event IDs together; an exclusive process lock prevents concurrent writers. Output is written separately to private append-only artifacts. Large deployments should replace whole-state rewrites with SQLite, without changing the facade.
 
-One logical worker owns one persistent conversation and serializes its tasks. Worker processes remain alive across turns. Stable bridge agentSessionId and nativeSessionId are distinct from taskId. On daemon restart, in-flight work fails explicitly (never replay side effects), queued work resumes, and existing sessions load only when negotiated. Failed or unsupported load does not silently start a new conversation.
+Each conversation owns one worker process and serializes its turns; separate conversations on the same logical worker run concurrently up to `maxConcurrentTasks`. Worker processes remain alive across turns. Stable bridge agentSessionId and nativeSessionId are distinct from taskId. On daemon restart, in-flight work fails explicitly (never replay side effects), queued work resumes, and existing sessions load only when negotiated. Failed or unsupported load does not silently start a new conversation.
 
 MCP is the portable integration for this milestone. Mod tools/status work locally, but documented agent registration cannot attach an external runtime. Keep the tested Mod as a feasibility spike; no false native-subagent identity and no auto-wake claim. Events are a durable replayable inbox; caller owns its cursor.
 
