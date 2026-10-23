@@ -268,6 +268,8 @@ Defaults: two concurrent workers, ten-minute task deadline, 2,000 inline charact
 
 ### 9. Tests and troubleshooting
 
+Update an installed local-marketplace plugin with `npm run update:plugin`: it requires `main`, fast-forwards to `origin/main` (uncommitted changes are preserved; local commits are never rebased or discarded), rebuilds and refreshes `agent-bridge@agent-bridge-local`, then you reload plugins with `/reload-plugins`.
+
 ```sh
 npm test
 npm run demo
