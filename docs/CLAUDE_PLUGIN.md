@@ -50,6 +50,7 @@ Direct skill invocation also works:
 ```text
 /agent-bridge:delegate devin review the validation logic without editing files
 /agent-bridge:delegate copilot implement the retry fix and its regression test
+/agent-bridge:worker-settings claude model and read-only options
 ```
 
 ### Specialized workers

@@ -56,6 +56,7 @@ export const schema = z
             )
             .refine((o) => Object.keys(o).length <= 20)
             .default({}),
+          internal: z.boolean().default(false),
         })
         .strict(),
     ),

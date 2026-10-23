@@ -68,6 +68,7 @@ agents:
     provider: mock
     description: Deterministic offline integration demo
     workspace: read-only
+    internal: true
   devin-worker:
     provider: devin
     description: Devin local implementation worker (local CLI; authentication required)

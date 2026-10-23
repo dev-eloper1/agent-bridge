@@ -340,6 +340,10 @@ export class Runtime {
             buildId,
             configDigest: this.config.configDigest,
             startedAt: this.startedAt,
+            activeTaskIds: Object.values(this.store.state.tasks)
+              .filter((t) => !terminal(t.status))
+              .slice(-100)
+              .map((t) => t.taskId),
           },
           runtime: {
             maxConcurrentTasks: this.config.runtime.maxConcurrentTasks,
@@ -531,89 +535,91 @@ export class Runtime {
         return entries;
       }
       case "list":
-        return Object.entries(this.config.agents).map(([agentId, agent]) => {
-          const sessions = Object.values(this.store.state.sessions).filter(
-            (s) => s.agentId === agentId,
-          );
-          const running = [...this.active.values()].filter(
-            (r) => r.task.agentId === agentId,
-          );
-          const current =
-            running.at(-1)?.task.agentSessionId ??
-            this.workerSessions.get(agentId);
-          const s =
-            sessions.find((s) => s.agentSessionId === current) ??
-            this.store.state.sessions[agentId];
-          const p = this.config.providers[agent.provider];
-          const executable = resolveExecutable(p.command, this.config.root);
-          const missingDependencies = p.requires.filter(
-            (x) => !resolveExecutable(x, this.config.root),
-          );
-          const available =
-            Boolean(executable) && missingDependencies.length === 0;
-          return {
-            agentId,
-            ...agent,
-            configuredSession: agent.sessionConfig,
-            available,
-            executable: executable ?? null,
-            missingDependencies,
-            status: running.length
-              ? "busy"
-              : this.workerKeys(agentId).length
-                ? "ready"
-                : "registered",
-            runningTasks: running.length,
-            agentSessionId: s?.agentSessionId,
-            workerName: s?.workerName,
-            activeTasks: Object.values(this.store.state.tasks)
-              .filter((t) => t.agentId === agentId && !terminal(t.status))
-              .slice(-10)
-              .map((t) => ({
-                taskId: t.taskId,
-                agentSessionId: t.agentSessionId,
-                workerName: t.workerName,
-                taskKey: t.taskKey,
-                description: t.description,
-                execution: t.execution,
-                status: t.status,
-              })),
-            defaultWorkspace: this.defaultWorkspace(agentId),
-            sessions: sessions.slice(-10).map((s) => ({
-              agentSessionId: s.agentSessionId,
-              workerName: s.workerName,
-              sessionConfig: s.sessionConfig,
-              template: s.template ? templateMetadata(s.template) : undefined,
-              specialist: s.specialistSnapshot
-                ? specialistMetadata(s.specialistSnapshot)
-                : undefined,
-              workspace: s.workspace ?? this.defaultWorkspace(agentId),
-              cwd: s.cwd,
-              lastTask: Object.values(this.store.state.tasks)
-                .filter((t) => t.agentSessionId === s.agentSessionId)
-                .slice(-1)
+        return Object.entries(this.config.agents)
+          .filter(([, agent]) => !agent.internal)
+          .map(([agentId, agent]) => {
+            const sessions = Object.values(this.store.state.sessions).filter(
+              (s) => s.agentId === agentId,
+            );
+            const running = [...this.active.values()].filter(
+              (r) => r.task.agentId === agentId,
+            );
+            const current =
+              running.at(-1)?.task.agentSessionId ??
+              this.workerSessions.get(agentId);
+            const s =
+              sessions.find((s) => s.agentSessionId === current) ??
+              this.store.state.sessions[agentId];
+            const p = this.config.providers[agent.provider];
+            const executable = resolveExecutable(p.command, this.config.root);
+            const missingDependencies = p.requires.filter(
+              (x) => !resolveExecutable(x, this.config.root),
+            );
+            const available =
+              Boolean(executable) && missingDependencies.length === 0;
+            return {
+              agentId,
+              ...agent,
+              configuredSession: agent.sessionConfig,
+              available,
+              executable: executable ?? null,
+              missingDependencies,
+              status: running.length
+                ? "busy"
+                : this.workerKeys(agentId).length
+                  ? "ready"
+                  : "registered",
+              runningTasks: running.length,
+              agentSessionId: s?.agentSessionId,
+              workerName: s?.workerName,
+              activeTasks: Object.values(this.store.state.tasks)
+                .filter((t) => t.agentId === agentId && !terminal(t.status))
+                .slice(-10)
                 .map((t) => ({
                   taskId: t.taskId,
+                  agentSessionId: t.agentSessionId,
+                  workerName: t.workerName,
+                  taskKey: t.taskKey,
                   description: t.description,
+                  execution: t.execution,
                   status: t.status,
-                  createdAt: t.createdAt,
-                }))[0],
-            })),
-            totalSessions: sessions.length,
-            capabilities: s?.capabilities ?? "not negotiated",
-            models: s?.models
-              ? {
-                  currentModelId: (s.models as any).currentModelId,
-                  availableModels: (s.models as any).availableModels
-                    ?.slice(0, 10)
-                    .map((m: any) => ({ modelId: m.modelId, name: m.name })),
-                  total: (s.models as any).availableModels?.length,
-                }
-              : "not discovered",
-            recovery: s?.recovery ?? "not tested",
-            cost: "unknown; provider metadata is not invoice cost",
-          };
-        });
+                })),
+              defaultWorkspace: this.defaultWorkspace(agentId),
+              sessions: sessions.slice(-10).map((s) => ({
+                agentSessionId: s.agentSessionId,
+                workerName: s.workerName,
+                sessionConfig: s.sessionConfig,
+                template: s.template ? templateMetadata(s.template) : undefined,
+                specialist: s.specialistSnapshot
+                  ? specialistMetadata(s.specialistSnapshot)
+                  : undefined,
+                workspace: s.workspace ?? this.defaultWorkspace(agentId),
+                cwd: s.cwd,
+                lastTask: Object.values(this.store.state.tasks)
+                  .filter((t) => t.agentSessionId === s.agentSessionId)
+                  .slice(-1)
+                  .map((t) => ({
+                    taskId: t.taskId,
+                    description: t.description,
+                    status: t.status,
+                    createdAt: t.createdAt,
+                  }))[0],
+              })),
+              totalSessions: sessions.length,
+              capabilities: s?.capabilities ?? "not negotiated",
+              models: s?.models
+                ? {
+                    currentModelId: (s.models as any).currentModelId,
+                    availableModels: (s.models as any).availableModels
+                      ?.slice(0, 10)
+                      .map((m: any) => ({ modelId: m.modelId, name: m.name })),
+                    total: (s.models as any).availableModels?.length,
+                  }
+                : "not discovered",
+              recovery: s?.recovery ?? "not tested",
+              cost: "unknown; provider metadata is not invoice cost",
+            };
+          });
       case "spawn": {
         const agent = this.config.agents[a.agentId];
         if (!agent) throw Error("Unknown agent");

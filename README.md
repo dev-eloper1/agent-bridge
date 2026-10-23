@@ -8,7 +8,7 @@ Agent Bridge is a Claude Code plugin for delegating to **Devin, Pi, Codex, Curso
 
 The plugin combines delegation skills, MCP tools and a Claude Mod interface. It starts a small local runtime automatically and reuses your installed CLIs and their existing authentication. It uses **Agent Client Protocol (ACP)** and pinned adapters rather than building another coding-agent framework.
 
-**Current checkpoint: 0.5.2 · Local prototype · 137 runtime tests + 38 Mod-host tests passing.** Live provider results and their limits are recorded in [validation](docs/VALIDATION.md) and the [provider matrix](docs/PROVIDERS.md).
+**Current checkpoint: 0.5.2 · Local prototype · 139 runtime tests + 38 Mod-host tests passing.** Live provider results and their limits are recorded in [validation](docs/VALIDATION.md) and the [provider matrix](docs/PROVIDERS.md).
 
 [Quick start](#quick-start) · [Usage](#delegate-in-your-own-words) · [Worker inspector](#watch-and-navigate) · [Architecture](#how-it-works) · [Limitations](#current-boundaries) · [Roadmap](#where-this-goes-next)
 
@@ -87,6 +87,7 @@ Direct skill invocation is also available:
 ```text
 /agent-bridge:delegate devin fix the failing validation test
 /agent-bridge:delegate pi review the changes
+/agent-bridge:worker-settings claude model and read-only options
 /agent-bridge:status
 ```
 
@@ -204,11 +205,12 @@ Without Mods, skills and foreground MCP delegation still work. Automatic backgro
 npm test                      # Build + deterministic runtime/integration tests
 npm run test:mod              # Real Claude Mod host; no model request
 npm run demo                  # Offline background, questions and recovery demo
+                              # (uses the internal mock profile, hidden from agents_list and /workers settings)
 npm run smoke:providers       # Live provider suite; uses your configured accounts
 npm run smoke:claude-plugin -- --codex-review
 ```
 
-At this checkpoint, **137 runtime tests and 38 Mod-host tests pass**. Live interface checks covered Back, Escape, slash-command navigation and Page Down scrolling. Previously recorded live runs passed conversation continuity/native recovery on all seven providers; six passed scoped code edits with independent checks, and Pi passed read-only review. Those are dated observations, not continuous compatibility guarantees. Paid provider runs were not repeated for the UI checkpoint.
+At this checkpoint, **139 runtime tests and 38 Mod-host tests pass**. Live interface checks covered Back, Escape, slash-command navigation and Page Down scrolling. Previously recorded live runs passed conversation continuity/native recovery on all seven providers; six passed scoped code edits with independent checks, and Pi passed read-only review. Those are dated observations, not continuous compatibility guarantees. Paid provider runs were not repeated for the UI checkpoint.
 
 Known boundaries:
 

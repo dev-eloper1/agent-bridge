@@ -135,9 +135,10 @@ export async function ensureRuntime(
   if (!stale) return { status: "ready", restarted: false };
   const activeTaskIds = [
     ...new Set(
-      (live.list as { activeTasks?: { taskId: string }[] }[]).flatMap((a) =>
-        (a.activeTasks ?? []).map((t) => t.taskId),
-      ),
+      (daemon as { activeTaskIds?: string[] } | undefined)?.activeTaskIds ??
+        (live.list as { activeTasks?: { taskId: string }[] }[]).flatMap((a) =>
+          (a.activeTasks ?? []).map((t) => t.taskId),
+        ),
     ),
   ];
   if (activeTaskIds.length)
@@ -428,9 +429,16 @@ export async function pluginRestart(cwd = process.cwd()) {
       `Agent Bridge runtime is not reachable at ${config.socket}; nothing to restart. Start it with a worker delegation or plugin-bootstrap.`,
     );
   }
-  const active = (list as { activeTasks?: { taskId: string }[] }[]).flatMap(
-    (a) => a.activeTasks ?? [],
-  );
+  const doctor = await remote(config, "doctor").catch(() => undefined);
+  const doctorTaskIds = (
+    (doctor as { daemon?: { activeTaskIds?: string[] } } | undefined)?.daemon
+      ?.activeTaskIds ?? []
+  ).map((taskId) => ({ taskId }));
+  const active = doctorTaskIds.length
+    ? doctorTaskIds
+    : (list as { activeTasks?: { taskId: string }[] }[]).flatMap(
+        (a) => a.activeTasks ?? [],
+      );
   if (active.length)
     throw Error(
       `Refusing to restart: ${active.length} nonterminal task(s) still active (${active

@@ -117,7 +117,9 @@ export async function probeAllAgentSettings(
   options?: ProbeOptions,
 ): Promise<AgentSettingsProbe[]> {
   const results: AgentSettingsProbe[] = [];
-  const ids = Object.keys(config.agents);
+  const ids = Object.entries(config.agents)
+    .filter(([, agent]) => !agent.internal)
+    .map(([id]) => id);
   for (let i = 0; i < ids.length; i += 2)
     results.push(
       ...(await Promise.all(
