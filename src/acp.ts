@@ -113,6 +113,7 @@ export class Worker {
         fs: { readTextFile: false, writeTextFile: false },
         terminal: false,
         elicitation: { form: {} },
+        session: { configOptions: { boolean: {} } },
       },
     });
     return this.init;
@@ -156,6 +157,89 @@ export class Worker {
       mcpServers: [],
       ...system,
     });
+  }
+  async applySessionConfig(
+    sessionId: string,
+    configured: Record<string, string | boolean>,
+    response: NewSessionResponse | LoadSessionResponse,
+  ): Promise<{
+    configOptions: any[];
+    effective: Record<string, string | boolean>;
+  }> {
+    let options: any[] = (response as any).configOptions ?? [];
+    const modes = (response as any).modes;
+    const effective: Record<string, string | boolean> = {};
+    const identifier = (o: any) => o?.id ?? o?.configId;
+    const choices = (o: any): string[] =>
+      (o?.options ?? []).flatMap((x: any) =>
+        Array.isArray(x?.options)
+          ? x.options.map((y: any) => String(y.value))
+          : x && "value" in x
+            ? [String(x.value)]
+            : [],
+      );
+    for (const [key, value] of Object.entries(configured)) {
+      const option = options.find((o) => identifier(o) === key);
+      if (!option) {
+        if (
+          key === "mode" &&
+          typeof value === "string" &&
+          modes?.availableModes?.some((m: any) => m.id === value)
+        ) {
+          await this.connection.agent.request("session/set_mode", {
+            sessionId,
+            modeId: value,
+          });
+          effective[key] = value;
+          continue;
+        }
+        throw Error(
+          `Configured session option "${key}" is not advertised by the provider (available: ${
+            options.map(identifier).filter(Boolean).join(", ") || "none"
+          })`,
+        );
+      }
+      const configId = identifier(option);
+      const boolean = typeof option.currentValue === "boolean";
+      if (boolean) {
+        if (typeof value !== "boolean")
+          throw Error(
+            `Configured session option "${key}" expects a boolean value`,
+          );
+      } else {
+        const advertised = choices(option);
+        if (typeof value !== "string" || !advertised.includes(value))
+          throw Error(
+            `Configured session option "${key}" must be one of: ${
+              advertised.join(", ") || "none advertised"
+            }`,
+          );
+      }
+      if (option.currentValue === value) {
+        effective[key] = value;
+        continue;
+      }
+      const result: any = await this.connection.agent.request(
+        "session/set_config_option",
+        {
+          sessionId,
+          configId,
+          ...(boolean ? { value, type: "boolean" } : { value }),
+        },
+      );
+      if (!Array.isArray(result?.configOptions))
+        throw Error(
+          `Provider did not confirm session option "${key}"=${JSON.stringify(value)}: set response lacks configOptions`,
+        );
+      options = result.configOptions;
+      const confirmed = options.find((o) => identifier(o) === configId);
+      if (!confirmed || confirmed.currentValue !== value)
+        throw Error(
+          `Provider did not confirm session option "${key}"=${JSON.stringify(value)}`,
+        );
+      effective[key] = confirmed.currentValue;
+    }
+    return { configOptions: options, effective };
   }
   prompt(sessionId: string, text: string) {
     return this.connection.agent.request("session/prompt", {

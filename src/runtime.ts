@@ -51,6 +51,7 @@ const message = z.string().min(1).max(16000);
 export const inputs = {
   list: z.object({}).strict(),
   dashboard: z.object({}).strict(),
+  doctor: z.object({}).strict(),
   define: z
     .object({
       scope: z.enum(["project", "global"]).default("project"),
@@ -147,7 +148,9 @@ interface Active {
   outputPrefix: string;
   task: Task;
   worker?: Worker;
-  timer: NodeJS.Timeout;
+  timer?: NodeJS.Timeout;
+  remainingMs: number;
+  resumedAt?: number;
   interrupted: Promise<never>;
   reject: (e: Error) => void;
 }
@@ -220,12 +223,50 @@ export class Runtime {
   append(t: Task, name: string, value: string) {
     this.store.append(t.taskId, name, this.sanitize(value));
   }
+  queue(t: Task) {
+    const queued = Object.values(this.store.state.tasks).filter(
+      (x) => x.status === "queued",
+    );
+    const suppressed =
+      t.status === "queued" &&
+      [...this.active.values()].some(
+        (r) =>
+          r.task.agentId === t.agentId &&
+          r.task.status === "blocked_on_input" &&
+          r.task.question?.kind === "permission",
+      );
+    const index = queued.findIndex((x) => x.taskId === t.taskId);
+    return {
+      queuePosition: index >= 0 ? index + 1 : undefined,
+      queuedTasks: queued.length,
+      activeTasks: this.active.size,
+      concurrencyLimit: this.config.runtime.maxConcurrentTasks,
+      queueReason: suppressed
+        ? ("agent_waiting_for_permission" as const)
+        : undefined,
+    };
+  }
   compact(t: Task) {
     const { acceptanceCriteria, ...rest } = t;
     return {
       ...rest,
       acceptanceCriteriaCount: acceptanceCriteria.length,
       followups: t.followups.length,
+      ...this.queue(t),
+    };
+  }
+  lean(t: Task) {
+    return {
+      taskId: t.taskId,
+      agentId: t.agentId,
+      agentSessionId: t.agentSessionId,
+      workerName: t.workerName,
+      description: t.description,
+      execution: t.execution,
+      status: t.status,
+      question: t.question,
+      activity: t.activity,
+      ...this.queue(t),
     };
   }
   session(t: Task): Session {
@@ -282,6 +323,56 @@ export class Runtime {
             "no workflow runner",
             "no worker launch or permissions controls",
           ],
+        };
+      }
+      case "doctor": {
+        const bound = (x: unknown, max = 500) =>
+          this.sanitize(String(x)).slice(0, max);
+        return {
+          configFile: bound(this.config.sourceFile),
+          workspace: bound(this.config.root),
+          stateDir: bound(this.config.stateDir),
+          socket: bound(this.config.socket),
+          daemon: { pid: process.pid },
+          runtime: {
+            maxConcurrentTasks: this.config.runtime.maxConcurrentTasks,
+            maxRuntimeMs: this.config.runtime.maxRuntimeMs,
+            maxInlineChars: this.config.runtime.maxInlineChars,
+            maxArtifactBytes: this.config.runtime.maxArtifactBytes,
+          },
+          providers: Object.fromEntries(
+            Object.entries(this.config.providers).map(([id, p]) => [
+              id,
+              {
+                command: bound(p.command),
+                args: p.args.slice(0, 50).map((x) => bound(x)),
+                configuredEnv: Object.keys(p.env)
+                  .slice(0, 100)
+                  .map((name) => bound(name, 200)),
+                inheritedEnv: Object.fromEntries(
+                  p.envNames
+                    .slice(0, 100)
+                    .map((name) => [
+                      bound(name, 200),
+                      process.env[name] !== undefined ? "set" : "unset",
+                    ]),
+                ),
+                envPaths: p.envPaths
+                  .slice(0, 100)
+                  .map((name) => bound(name, 200)),
+              },
+            ]),
+          ),
+          agents: Object.fromEntries(
+            Object.entries(this.config.agents).map(([id, a]) => [
+              id,
+              {
+                provider: a.provider,
+                workspace: a.workspace,
+                sessionConfig: a.sessionConfig,
+              },
+            ]),
+          ),
         };
       }
       case "define":
@@ -456,6 +547,7 @@ export class Runtime {
           return {
             agentId,
             ...agent,
+            configuredSession: agent.sessionConfig,
             available,
             executable: executable ?? null,
             missingDependencies,
@@ -483,6 +575,7 @@ export class Runtime {
             sessions: sessions.slice(-10).map((s) => ({
               agentSessionId: s.agentSessionId,
               workerName: s.workerName,
+              sessionConfig: s.sessionConfig,
               template: s.template ? templateMetadata(s.template) : undefined,
               specialist: s.specialistSnapshot
                 ? specialistMetadata(s.specialistSnapshot)
@@ -641,6 +734,10 @@ export class Runtime {
             workspace: selected,
             workspaceIdentity: identity,
             cwd: identity?.canonicalPath,
+            sessionConfig: {
+              requested: { ...agent.sessionConfig },
+              effective: {},
+            },
           };
         }
         const t: Task = {
@@ -690,6 +787,10 @@ export class Runtime {
           verification: "pending",
           followups: [],
           steeringCount: 0,
+          sessionConfig: {
+            requested: { ...agent.sessionConfig },
+            effective: {},
+          },
         };
         this.append(t, "prompt.txt", a.prompt);
         this.store.state.tasks[t.taskId] = t;
@@ -709,7 +810,7 @@ export class Runtime {
             Date.now() >= deadline
           )
             return {
-              tasks: tasks.map((t: Task) => this.compact(t)),
+              tasks: tasks.map((t: Task) => this.lean(t)),
               timedOut: Date.now() >= deadline,
             };
           await new Promise((r) => setTimeout(r, 50));
@@ -826,6 +927,13 @@ export class Runtime {
         );
       result = { action: "accept", content };
     }
+    const active = this.active.get(t.agentSessionId);
+    if (!active) throw Error("Task is no longer active");
+    if (active.remainingMs <= 0) {
+      this.finish(t, "timed_out", "Runtime budget exceeded");
+      this.interrupt(active);
+      throw Error("Runtime budget exceeded");
+    }
     this.append(
       t,
       "transcript.jsonl",
@@ -838,18 +946,52 @@ export class Runtime {
     this.questions.delete(a.questionId);
     delete t.question;
     t.status = "running";
+    this.resume(active);
     this.store.event(t, "task.replied", "Reply accepted");
     q.resolve(result);
     return { accepted: true };
   }
   schedule() {
     if (this.closed) return;
+    const waitingPermission = new Set(
+      [...this.active.values()]
+        .filter(
+          (r) =>
+            r.task.status === "blocked_on_input" &&
+            r.task.question?.kind === "permission",
+        )
+        .map((r) => r.task.agentId),
+    );
     for (const t of Object.values(this.store.state.tasks)) {
       if (this.active.size >= this.config.runtime.maxConcurrentTasks) break;
       // Only turns within one conversation serialize; they share a native session.
-      if (t.status === "queued" && !this.active.has(t.agentSessionId))
+      if (
+        t.status === "queued" &&
+        !this.active.has(t.agentSessionId) &&
+        !waitingPermission.has(t.agentId)
+      )
         void this.run(t);
     }
+  }
+  pause(r?: Active) {
+    if (!r?.timer || r.resumedAt === undefined) return;
+    clearTimeout(r.timer);
+    r.timer = undefined;
+    r.remainingMs -= Date.now() - r.resumedAt;
+    r.resumedAt = undefined;
+  }
+  resume(r?: Active) {
+    if (!r || r.timer || terminal(r.task.status)) return;
+    r.resumedAt = Date.now();
+    if (r.remainingMs <= 0) {
+      this.finish(r.task, "timed_out", "Runtime budget exceeded");
+      this.interrupt(r);
+      return;
+    }
+    r.timer = setTimeout(() => {
+      this.finish(r.task, "timed_out", "Runtime budget exceeded");
+      this.interrupt(r);
+    }, r.remainingMs);
   }
   workerKeys(agentId: string) {
     return [...this.workers.keys()].filter(
@@ -950,6 +1092,8 @@ export class Runtime {
       task: t,
       interrupted,
       reject,
+      remainingMs: this.config.runtime.maxRuntimeMs,
+      resumedAt: Date.now(),
       timer: setTimeout(() => {
         this.finish(t, "timed_out", "Runtime budget exceeded");
         this.interrupt(r);
@@ -1060,9 +1204,26 @@ export class Runtime {
           "Existing native conversation loaded",
         );
       }
-      if (response) s.models = discoverModels(response) ?? s.models;
+      const applied = await w.applySessionConfig(
+        s.nativeSessionId!,
+        a.sessionConfig,
+        response,
+      );
+      s.sessionConfig ??= { requested: { ...a.sessionConfig }, effective: {} };
+      s.sessionConfig.requested = { ...a.sessionConfig };
+      s.sessionConfig.effective = applied.effective;
+      if (response)
+        s.models =
+          discoverModels({
+            ...response,
+            configOptions: applied.configOptions,
+          }) ?? s.models;
       this.store.save();
     }
+    t.sessionConfig = {
+      requested: { ...a.sessionConfig },
+      effective: { ...(s.sessionConfig?.effective ?? {}) },
+    };
     r.worker = w;
     t.modelId = (
       s.models as { currentModelId?: string } | undefined
@@ -1263,6 +1424,14 @@ export class Runtime {
       JSON.stringify({ type: "question", questionId, kind, request }) + "\n",
     );
     t.status = "blocked_on_input";
+    const tool = request.toolCall;
+    const toolInput = tool
+      ? (tool.rawInput ??
+        tool.input ??
+        tool.command ??
+        tool.arguments ??
+        tool.content)
+      : undefined;
     t.question = {
       artifactRef: `artifact://${t.taskId}/transcript.jsonl`,
       questionId,
@@ -1277,7 +1446,34 @@ export class Runtime {
         kind: String(o.kind).slice(0, 50),
         name: this.sanitize(String(o.name)).slice(0, 120),
       })),
+      toolCall: tool
+        ? {
+            toolCallId:
+              tool.toolCallId == null
+                ? undefined
+                : String(tool.toolCallId).slice(0, 200),
+            title:
+              tool.title == null
+                ? undefined
+                : this.sanitize(String(tool.title))
+                    .replace(/[\x00-\x1f\x7f]/g, " ")
+                    .slice(0, 240),
+            kind:
+              tool.kind == null ? undefined : String(tool.kind).slice(0, 40),
+            input:
+              toolInput == null
+                ? undefined
+                : this.sanitize(
+                    typeof toolInput === "string"
+                      ? toolInput
+                      : JSON.stringify(toolInput),
+                  )
+                    .replace(/[\x00-\x1f\x7f]/g, " ")
+                    .slice(0, 2000),
+          }
+        : undefined,
     };
+    this.pause(this.active.get(key));
     return new Promise((resolve) => {
       this.questions.set(questionId, {
         taskId: t.taskId,

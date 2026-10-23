@@ -358,7 +358,28 @@ test("actual daemon crash preserves history/queue and MCP reconnect does not own
     });
     client = new Client({ name: "test", version: "1" });
     await client.connect(transport);
-    assert.equal((await client.listTools()).tools.length, 17);
+    const tools = (await client.listTools()).tools;
+    assert.equal(tools.length, 18);
+    const note = (name) =>
+      tools.find((t) => t.name === name)?.annotations ?? {};
+    assert.equal(note("agents_doctor").readOnlyHint, true);
+    assert.equal(note("agents_doctor").destructiveHint, false);
+    assert.equal(note("specialists_schema").readOnlyHint, true);
+    assert.equal(note("specialists_validate").readOnlyHint, true);
+    assert.equal(note("specialists_catalog").readOnlyHint, true);
+    assert.equal(note("agents_list").readOnlyHint, true);
+    assert.equal(note("agents_wait").readOnlyHint, true);
+    assert.equal(note("agents_status").readOnlyHint, true);
+    assert.equal(note("agents_result").readOnlyHint, true);
+    assert.equal(note("agents_cancel").destructiveHint, false);
+    assert.equal(note("agents_cancel").idempotentHint, true);
+    assert.match(
+      tools.find((t) => t.name === "agents_cancel")?.description ?? "",
+      /risk-reducing.*never modifies project files/s,
+    );
+    assert.equal(note("agents_spawn").readOnlyHint, undefined);
+    assert.equal(note("agents_reply").readOnlyHint, undefined);
+    assert.equal(note("agents_steer").readOnlyHint, undefined);
     const spawnResult = await client.callTool({
       name: "agents_spawn",
       arguments: { agentId: "one", prompt: "SLOW" },

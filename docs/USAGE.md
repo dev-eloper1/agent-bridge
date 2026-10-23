@@ -143,6 +143,7 @@ The relevant tools are usually displayed with the MCP server prefix, then these 
 | `agents_events`   | Read replayable events after your last cursor                                                                                    |
 | `agents_result`   | Bounded output tail, verification status and artifact references                                                                 |
 | `agents_artifact` | Fetch a bounded byte page of an artifact                                                                                         |
+| `agents_doctor`   | Read-only sanitized runtime diagnostics: config path, daemon, limits, provider commands/env names (never values), sessionConfig  |
 | `agents_cancel`   | Cancel and terminate that worker's process group                                                                                 |
 
 Use the same agentId plus the original agentSessionId for explicit follow-ups. New tasks get fresh context. Omit taskKey for a new job, or give it a unique value; reuse the same taskKey only to retry the same dispatch. Workers share the project folder by default; coordinate overlapping edits. Explicit worktrees and alternate folders are separate; give a reviewer the actual directory or diff.
@@ -225,7 +226,9 @@ For input questions, the compact question includes a transcript reference. Read 
 }
 ```
 
-The convenience `message` field handles a form whose answer property is named `message`. Other form fields use `content`. For permission requests, review the actual tool call in the transcript, then provide the offered `optionId` of an `allow_once` or `reject_once` option. Permanent options are refused. A read-only profile denies permission requests automatically. Some providers perform workspace edits under their own settings without asking through ACP; this bridge is not an OS sandbox.
+The convenience `message` field handles a form whose answer property is named `message`. Other form fields use `content`. For permission requests, review the actual tool call (summarized in the question's `toolCall` field and in full in the transcript), then provide the offered `optionId` of an `allow_once` or `reject_once` option. Permanent/session options such as `allow_always` are refused — persistent decisions stay forbidden through `agents_reply`. A read-only profile denies permission requests automatically. Some providers perform workspace edits under their own settings without asking through ACP; this bridge is not an OS sandbox.
+
+While a task waits on a permission decision its runtime budget is paused, and queued tasks for the same agent profile stay queued (`queueReason: "agent_waiting_for_permission"`) until it is resolved; other profiles still schedule normally. Compact spawn/status/result payloads report `queuePosition`, `queuedTasks`, `activeTasks` and `concurrencyLimit` at call time. Trusted per-profile ACP session settings live in `agents.<id>.sessionConfig` and are validated against provider-advertised options; spawn/run inputs cannot escalate them.
 
 Read an artifact page:
 
@@ -249,7 +252,7 @@ Edit the project YAML's trusted provider entries. `command` and `args` are spawn
 
 Pi uses your corrected default model; no bridge override is present. If you explicitly need a different Pi model just for the bridge, set `providers.pi.env.BRIDGE_PI_MODEL` to one of the IDs that Pi supports. The wrapper forwards it as Pi's `--model` flag and does not change global settings. Model choice for other providers follows their CLI/configuration; there is no universal bridge model-switching API.
 
-Defaults: two concurrent workers, ten-minute task deadline, 2,000 inline characters, 10 MiB per artifact file, at most 100 nonterminal queued/running tasks, two steering turns per task and ten pending questions. Increase `runtime.maxRuntimeMs` for long jobs; the deadline includes waiting for replies. Output budgets and explicit cancellation bound runaway work.
+Defaults: two concurrent workers, ten-minute task deadline, 2,000 inline characters, 10 MiB per artifact file, at most 100 nonterminal queued/running tasks, two steering turns per task and ten pending questions. Increase `runtime.maxRuntimeMs` for long jobs; time spent blocked on an input/permission question does not consume the deadline, and blocked tasks still count against the concurrency limit. Output budgets and explicit cancellation bound runaway work.
 
 ### 9. Tests and troubleshooting
 

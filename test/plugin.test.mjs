@@ -57,7 +57,7 @@ test("Claude plugin autostarts one project daemon, reconnects to persistent task
   try {
     [one, two] = await Promise.all([connect(dir), connect(dir)]);
     const pid = readFileSync(path.join(dir, ".agent-bridge/lock/pid"), "utf8");
-    assert.equal((await one.listTools()).tools.length, 17);
+    assert.equal((await one.listTools()).tools.length, 18);
     const first = await tool(one, "agents_spawn", {
       agentId: "demo",
       prompt: "remember plugin marker",
@@ -75,7 +75,10 @@ test("Claude plugin autostarts one project daemon, reconnects to persistent task
       prompt: "recall",
       agentSessionId: first.agentSessionId,
     });
-    await tool(two, "agents_wait", { taskIds: [second.taskId], timeoutMs: 4000 });
+    await tool(two, "agents_wait", {
+      taskIds: [second.taskId],
+      timeoutMs: 4000,
+    });
     const page = await tool(two, "agents_artifact", {
       ref: `artifact://${second.taskId}/output.txt`,
       limit: 2000,
@@ -132,7 +135,9 @@ test("specialist tools expose .specialists specs through MCP without instruction
     assert.ok(entry);
     assert.equal(entry.reference, "project:hivemind/triage-investigator");
     assert.equal(entry.instructions, undefined);
-    const found = await tool(client, "specialists_catalog", { query: "TRIAGE" });
+    const found = await tool(client, "specialists_catalog", {
+      query: "TRIAGE",
+    });
     const foundEntry = found.find(
       (e) => e.reference === "project:hivemind/triage-investigator",
     );

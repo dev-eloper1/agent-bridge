@@ -118,3 +118,68 @@ export async function bootstrap(cwd = process.cwd()) {
   await ensureRuntime(file, config);
   return { file, config, socket: config.socket, workspace: config.root };
 }
+export async function pluginDoctor(cwd = process.cwd()) {
+  const { config } = pluginConfig(cwd);
+  try {
+    return { ...(await remote(config, "doctor")), reachable: true };
+  } catch {}
+  try {
+    await remote(config, "list");
+    return {
+      configFile: config.sourceFile,
+      workspace: config.root,
+      stateDir: config.stateDir,
+      socket: config.socket,
+      daemon: {
+        running: true,
+        diagnostics:
+          "Runtime is reachable but does not expose doctor; restart to load the current bridge version",
+      },
+      reachable: true,
+    };
+  } catch {}
+  return {
+    configFile: config.sourceFile,
+    workspace: config.root,
+    stateDir: config.stateDir,
+    socket: config.socket,
+    daemon: { running: false },
+    reachable: false,
+  };
+}
+export async function pluginRestart(cwd = process.cwd()) {
+  const { file, config } = pluginConfig(cwd);
+  let list;
+  try {
+    list = await remote(config, "list");
+  } catch {
+    throw Error(
+      `Agent Bridge runtime is not reachable at ${config.socket}; nothing to restart. Start it with a worker delegation or plugin-bootstrap.`,
+    );
+  }
+  const active = (list as { activeTasks?: { taskId: string }[] }[]).flatMap(
+    (a) => a.activeTasks ?? [],
+  );
+  if (active.length)
+    throw Error(
+      `Refusing to restart: ${active.length} nonterminal task(s) still active (${active
+        .map((t) => t.taskId)
+        .join(
+          ", ",
+        )}). Cancel or finish them first; plugin-restart never cancels work.`,
+    );
+  await remote(config, "shutdown").catch(() => {});
+  const lock = path.join(config.stateDir, "lock");
+  const deadline = Date.now() + 8000;
+  while (
+    Date.now() < deadline &&
+    (existsSync(config.socket) || existsSync(lock))
+  )
+    await new Promise((r) => setTimeout(r, 50));
+  if (existsSync(config.socket) || existsSync(lock))
+    throw Error(
+      `Agent Bridge runtime did not stop at ${config.socket}; inspect ${lock} manually`,
+    );
+  await ensureRuntime(file, config);
+  return { ...(await remote(config, "doctor")), reachable: true };
+}
