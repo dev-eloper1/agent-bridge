@@ -19,7 +19,10 @@ let workspaceCwd,
   settingsLoading = false,
   settingsError,
   settingsActionError,
-  settingsNotice;
+  settingsNotice,
+  settingsChoicePages = {};
+const MAX_NATIVE_SELECT_OPTIONS = 64;
+const SETTINGS_CHOICE_PAGE_SIZE = 60;
 const terminal = (s) =>
   ["completed", "failed", "cancelled", "timed_out"].includes(s);
 function plain(value, max = 500) {
@@ -539,6 +542,21 @@ async function handleWorkersCommand($, e) {
       await $.ui.close({ id: "external-workers" });
       return { text: "Worker pane closed. Tasks continue." };
     }
+    if (argument === "help")
+      return {
+        text:
+          "/workers — overview\n" +
+          "/workers settings — provider-advertised profile settings\n" +
+          "/workers <name> or <name>/<task> — open a worker or task\n" +
+          "/workers history — task history\n" +
+          "/workers watch / pause — follow or pause live output\n" +
+          "/workers next / prev — page output\n" +
+          "/workers attention — jump to a worker needing input\n" +
+          "/workers cancel — cancel the selected task\n" +
+          "/workers dashboard — dashboard URL\n" +
+          "/workers close — close the pane\n" +
+          "/workers stop — interrupts active work and stops the runtime",
+      };
     if (argument === "dashboard") {
       const dashboard = await call($, "dashboard", {});
       return { text: "Agent Bridge dashboard: " + dashboard.url };
@@ -559,6 +577,7 @@ async function handleWorkersCommand($, e) {
       settingsError = undefined;
       settingsActionError = undefined;
       settingsNotice = undefined;
+      settingsChoicePages = {};
       $.ui.invalidate("ui.render");
       await openWorkerPane($, true);
       try {
@@ -698,7 +717,7 @@ async function handleWorkersCommand($, e) {
           : undefined;
       if (!id)
         return {
-          text: "Use /workers, /workers <name>, /workers <name>/1, or /workers history|settings|watch|pause|next|prev|cancel|close|stop.",
+          text: "Use /workers help — actions: settings, <name>, <name>/1, history, watch, pause, next, prev, attention, cancel, dashboard, close, stop.",
         };
       tasks[id] = await call($, "status", { taskId: id });
       selectTask(id);
@@ -755,6 +774,7 @@ export function register(on) {
     settingsError = undefined;
     settingsActionError = undefined;
     settingsNotice = undefined;
+    settingsChoicePages = {};
     key = "agent-bridge:" + (await $.session.id());
     try {
       composerHasDraft = Boolean((await $.prompt.read()).text);
@@ -778,7 +798,8 @@ export function register(on) {
     await $.command.register({
       name: "workers",
       description:
-        "Browse worker activity, output, history, settings and cancellation",
+        "Workers: overview, settings, history, output and cancellation",
+      argumentHint: "[settings|history|watch|pause|cancel|close|stop|worker]",
     });
     try {
       const boot = await $.process.run(
@@ -1067,47 +1088,141 @@ export function register(on) {
       };
       const editable = !explicit && pickers && ui.Select;
       const settingChildren = (agent) =>
-        (agent.options ?? []).flatMap((option) => [
-          ...(option.description
+        (agent.options ?? []).flatMap((option) => {
+          const header = option.description
             ? [
                 text(plain(option.description, 240), {
                   dimColor: true,
                   wrap: "wrap",
                 }),
               ]
-            : []),
-          editable
-            ? ui.Select({
+            : [];
+          if (!editable)
+            return [
+              ...header,
+              text(
+                `${option.name}: ${agent.requested?.[option.id] !== undefined ? JSON.stringify(agent.requested[option.id]) : `provider default (${option.currentValue})`}`,
+                { dimColor: true, wrap: "wrap" },
+              ),
+            ];
+          const saved = agent.requested?.[option.id];
+          const savedEnvelope =
+            saved !== undefined ? envelopeSet(saved) : undefined;
+          const children = [...header];
+          if (option.type === "boolean") {
+            children.push(
+              ui.Select({
                 key: `setting-${agent.agentId}-${option.id}`,
                 label: option.name,
-                value:
-                  agent.requested?.[option.id] !== undefined
-                    ? envelopeSet(agent.requested[option.id])
-                    : envelopeClear,
+                value: savedEnvelope ?? envelopeClear,
                 options: [
                   {
                     value: envelopeClear,
                     label: `Provider default (${option.currentValue})`,
                   },
-                  ...(option.type === "boolean"
+                  ...(saved !== undefined && typeof saved !== "boolean"
                     ? [
-                        { value: envelopeSet(false), label: "Disabled" },
-                        { value: envelopeSet(true), label: "Enabled" },
+                        {
+                          value: savedEnvelope,
+                          label: `Saved value unavailable (${JSON.stringify(saved)})`,
+                        },
                       ]
-                    : (option.choices ?? []).map((choice) => ({
-                        value: envelopeSet(choice.value),
-                        label: choice.description
-                          ? `${choice.name} · ${choice.description}`
-                          : choice.name,
-                      }))),
+                    : []),
+                  { value: envelopeSet(false), label: "Disabled" },
+                  { value: envelopeSet(true), label: "Enabled" },
                 ],
                 onSelect: (value) => applySetting(agent, option, value),
-              })
-            : text(
-                `${option.name}: ${agent.requested?.[option.id] !== undefined ? JSON.stringify(agent.requested[option.id]) : `provider default (${option.currentValue})`}`,
-                { dimColor: true, wrap: "wrap" },
+              }),
+            );
+            return children;
+          }
+          const choices = option.choices ?? [];
+          const paged = choices.length > MAX_NATIVE_SELECT_OPTIONS - 1;
+          const pageKey = `${agent.agentId}:${option.id}`;
+          const pageCount = Math.max(
+            1,
+            Math.ceil(choices.length / SETTINGS_CHOICE_PAGE_SIZE),
+          );
+          const page = Math.min(
+            Math.max(settingsChoicePages[pageKey] ?? 0, 0),
+            pageCount - 1,
+          );
+          const start = page * SETTINGS_CHOICE_PAGE_SIZE;
+          const pageChoices = paged
+            ? choices.slice(start, start + SETTINGS_CHOICE_PAGE_SIZE)
+            : choices;
+          const seen = new Set([envelopeClear]);
+          const selectOptions = [
+            {
+              value: envelopeClear,
+              label: `Provider default (${option.currentValue})`,
+            },
+          ];
+          const addChoice = (choice) => {
+            const value = envelopeSet(choice.value);
+            if (seen.has(value)) return;
+            seen.add(value);
+            selectOptions.push({
+              value,
+              label: choice.description
+                ? `${choice.name} · ${choice.description}`
+                : choice.name,
+            });
+          };
+          const savedChoice =
+            saved !== undefined
+              ? choices.find((c) => envelopeSet(c.value) === savedEnvelope)
+              : undefined;
+          if (saved !== undefined && !savedChoice) {
+            selectOptions.push({
+              value: savedEnvelope,
+              label: `Saved value unavailable (${JSON.stringify(saved)})`,
+            });
+            seen.add(savedEnvelope);
+          } else if (savedChoice && !pageChoices.includes(savedChoice))
+            addChoice(savedChoice);
+          for (const choice of pageChoices) addChoice(choice);
+          children.push(
+            ui.Select({
+              key: `setting-${agent.agentId}-${option.id}`,
+              label: option.name,
+              value: savedEnvelope ?? envelopeClear,
+              options: selectOptions.slice(0, MAX_NATIVE_SELECT_OPTIONS),
+              onSelect: (value) => applySetting(agent, option, value),
+            }),
+          );
+          if (paged) {
+            children.push(
+              text(
+                `Choices ${start + 1}-${start + pageChoices.length} of ${choices.length}`,
+                { dimColor: true },
               ),
-        ]);
+            );
+            if (page > 0)
+              children.push(
+                ui.Button({
+                  key: `settings-prev-${agent.agentId}-${option.id}`,
+                  label: "Previous choices",
+                  onPress: async () => {
+                    settingsChoicePages[pageKey] = page - 1;
+                    $.ui.invalidate("ui.render");
+                  },
+                }),
+              );
+            if (page < pageCount - 1)
+              children.push(
+                ui.Button({
+                  key: `settings-next-${agent.agentId}-${option.id}`,
+                  label: "Next choices",
+                  onPress: async () => {
+                    settingsChoicePages[pageKey] = page + 1;
+                    $.ui.invalidate("ui.render");
+                  },
+                }),
+              );
+          }
+          return children;
+        });
       const agents = (data?.agents ?? []).map((agent) => {
         const requested = Object.entries(agent.requested ?? {});
         const projectRequested = Object.entries(
