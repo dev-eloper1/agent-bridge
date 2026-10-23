@@ -26,7 +26,18 @@ Local execution does not mean local inference: each CLI normally contacts its co
 
 ### 1. Prepare the CLIs
 
-Use **Node.js 24+**, Claude Code with Mods enabled, and at least one installed/authenticated worker CLI. The Mod integration was tested locally with **Claude Code 2.1.304 on macOS**. Other host versions/platforms require validation; this is not a claim of universal compatibility.
+Use **Node.js 24+**, Claude Code with Mods enabled, and at least one installed/authenticated worker CLI. Verify your shell before continuing:
+
+```sh
+nvm use 24
+node --version
+which node
+which claude
+```
+
+Launch Claude from the same Node 24 shell — Agent Bridge and the Node-based ACP adapters inherit that environment. If `claude` was globally installed under an older NVM version, reinstall it under Node 24 (`npm install -g @anthropic-ai/claude-code`) and set `nvm alias default 24`.
+
+The Mod integration was tested locally with **Claude Code 2.1.304 on macOS**. Other host versions/platforms require validation; this is not a claim of universal compatibility.
 
 Sign in through the worker's normal CLI before delegating. Executable discovery alone does not prove valid authentication or model entitlement. You do not need every harness installed.
 
@@ -40,9 +51,9 @@ npm run build
 claude plugin install agent-bridge --marketplace "$PWD" --scope user
 ```
 
-Restart Claude Code, or run `/reload-plugins`. The install uses this checkout as a local marketplace; keep the checkout available and build it before updating. The example provider configuration reflects the validated local CLI setup. See [provider settings](docs/WORKER_SETTINGS.md) if your executable paths differ.
+Restart Claude Code, or run `/reload-plugins`. Use exactly one loading method — the installed user plugin **or** `--plugin-dir`, not both at once. The install uses this checkout as a local marketplace; keep the checkout available and build it before updating. The example provider configuration reflects the validated local CLI setup. See [provider settings](docs/WORKER_SETTINGS.md) if your executable paths differ.
 
-For one development session, start Claude from your **target project** with:
+For one development session instead of the installed plugin, start Claude from your **target project** with:
 
 ```sh
 claude --plugin-dir /absolute/path/to/agent-bridge
@@ -50,15 +61,15 @@ claude --plugin-dir /absolute/path/to/agent-bridge
 
 ### 3. Delegate in your target project
 
-Open Claude Code in the folder you want the worker to use, then ask:
+1. `cd` into the project the worker should use and start `claude`.
+2. Before your first worker, open `/workers settings` and pick the exact provider-advertised model/mode per profile — saved privately per workspace, never in project files.
+3. Delegate in natural language:
 
 ```text
 Use Devin to review this repo without changing files.
 ```
 
-No separate daemon terminal or manual MCP registration is needed. Agent Bridge finds the Git project root, or the starting folder outside Git, and creates private runtime state under `.agent-bridge/`. Add that directory to your project's `.gitignore`.
-
-Before your first delegated worker, open `/workers settings` to review each profile's provider-advertised options and choose values once — they are stored as private per-workspace preferences, not in your project files.
+No YAML, daemon terminal or manual MCP registration is needed. Agent Bridge finds the Git project root, or the starting folder outside Git, and creates private runtime state under `.agent-bridge/`. Add that directory to your project's `.gitignore`.
 
 To update an installed copy, run:
 
@@ -82,12 +93,13 @@ Then reload plugins or restart Claude. Updated defaults compile into the project
 | Multiple workers            | “Have Devin check the code and Pi check the docs in the background.”   | Both tasks appear in the inspector, subject to concurrency limits.                                             |
 | Specialized agent           | “Have Devin use Hivemind's triage investigator on this case.”          | Claude discovers the published spec, selects the specialist and delegates in the same turn.                    |
 
-Direct skill invocation is also available:
+Ordinary natural language usually selects the right skill automatically; direct invocation is optional:
 
 ```text
 /agent-bridge:delegate devin fix the failing validation test
 /agent-bridge:delegate pi review the changes
 /agent-bridge:worker-settings claude model and read-only options
+/agent-bridge:specialize create a strict API-contract reviewer for devin
 /agent-bridge:status
 ```
 
@@ -160,6 +172,14 @@ The pane has separate worker navigation and report-page controls. Switching work
 
 Native arrows can navigate focused controls, so use Page Up/Page Down for dependable content scrolling. Hotkeys apply while the pane holds focus. The idle worker strip/status disappear; typing a draft hides active band controls so slash-command menus remain clear. Public output is what the provider exposes, not hidden model reasoning or a full interactive mirror of its native CLI.
 
+### Models, permissions and blocked workers
+
+- Model, mode and reasoning options live in `/workers settings` — there is no per-task model argument.
+- A permission-blocked task is answered with **Allow once** or **Reject** directly in its pane; always/session/bypass choices deliberately stay in settings.
+- An input-blocked task takes a direct **Reply** field.
+- Settings are saved per workspace, per profile. Cloning or creating extra profiles is not normal UI yet — advanced project `agents.bridge.yaml` configuration only.
+- `/workers help` lists every pane action.
+
 [Complete navigation guide](docs/WORKER_NAVIGATION.md).
 
 ## How it works
@@ -217,8 +237,8 @@ Known boundaries:
 
 - This remains a local prototype. The native inspector is usable but keyboard/focus and terminal layout need continued real-world testing.
 - Worker reports are untrusted observations. Completion does not prove correct edits, passing tests or valid review findings.
-- Arbitrary cross-harness tool restrictions, system-prompt customization and model switching are not universally implemented. A workspace is not a sandbox.
-- Readiness detection does not yet provide a full guided authentication/entitlement recovery workflow.
+- Only provider-advertised settings are configurable. Profile cloning/creation, arbitrary cross-harness tool-policy normalization and universal sandboxing are not shipped — a workspace is not a sandbox.
+- Guided authentication/entitlement recovery remains planned; readiness detection reports problems without a full repair flow.
 - The inspector lists work owned by the originating Claude session; a project-wide browser of every session's work is not shipped.
 - Process-group cleanup handles normal child trees; providers that detach their own subprocesses and abrupt host failures have additional limits.
 
@@ -226,9 +246,9 @@ See the [checkpoint findings](docs/CHECKPOINT_0.5.2.md), [capability matrix](doc
 
 ## Where this goes next
 
-First, finish interface usability: clear navigation, predictable focus, retained history, actionable errors and unobtrusive activity.
+**Specialized workers** already ship: declarative instructions, compatibility restrictions and acceptance criteria, ephemeral inline specializations and Claude-led authoring through the `specialize` skill.
 
-Then extend **specialized workers**: the shipped specialist model covers declarative instructions, compatibility restrictions and acceptance criteria, ephemeral inline specializations and Claude-led authoring through the `specialize` skill; native tool/MCP bindings, model settings, memory policies, output contracts and evals remain future work. The next slice proves one reviewer specialist on two compatible harnesses, with measured outcomes and explicit unsupported capabilities. [Research brief](docs/SPECIALIZED_AGENTS.md).
+Next priorities: guided authentication/entitlement recovery, normal profile cloning/creation, broader provider validation and continued interface usability. Deeper specialization — native tool/MCP bindings, model settings, memory policies, output contracts and evals — remains future work. [Specialization reference](docs/SPECIALIZED_AGENTS.md).
 
 Optional **A2A agent-service providers** are a separate future direction. Agent Client Protocol is the ACP used here; IBM/BeeAI's different Agent Communication Protocol merged into A2A. That merger does not require replacing the CLI transport. [Roadmap](docs/ROADMAP.md).
 
@@ -244,7 +264,7 @@ Optional **A2A agent-service providers** are a separate future direction. Agent 
 | [Provider research](docs/PROVIDERS.md)           | Installed harnesses, adapters and recorded live results       |
 | [Validation](docs/VALIDATION.md)                 | Evidence, tests, decisions and limitations                    |
 | [Checkpoint findings](docs/CHECKPOINT_0.5.2.md)  | Shipped state and prioritized follow-up                       |
-| [Specialized agents](docs/SPECIALIZED_AGENTS.md) | Next-milestone research and acceptance gates                  |
+| [Specialized agents](docs/SPECIALIZED_AGENTS.md) | Shipped specialization model, format and acceptance           |
 | [Implementation checklist](docs/PLAN.md)         | Completed and outstanding work                                |
 
 The overview image is an architecture illustration, not a screenshot of Claude Code. Its editable [SVG source](docs/assets/agent-bridge-overview.svg) is included alongside the PNG.
