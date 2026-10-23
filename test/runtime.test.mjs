@@ -103,14 +103,33 @@ const done = (r, id) =>
 test("config validates multiple providers and fails closed on exploration claims", () => {
   const c = loadConfig();
   assert.equal(Object.keys(c.providers).length, 8);
+  assert.equal(c.agents.demo.internal, true);
+  assert.equal(c.agents["devin-worker"].internal, false);
   assert.throws(() => schema.parse({ ...c, version: 2 }));
   const f = fixture();
+  assert.equal(f.config.agents.one.internal, false);
   const x = JSON.parse(readFileSync(f.file));
   x.providers.mock.readOnlyEnforced = false;
   assert.throws(() => schema.parse(x), /provider-side/);
   x.providers.mock.readOnlyEnforced = true;
   x.providers.mock.unknown = "bad";
   assert.throws(() => schema.parse(x));
+});
+test("internal agents are hidden from list but still run directly", async () => {
+  const f = fixture();
+  f.config.agents.one.internal = true;
+  const r = new Runtime(f.config);
+  try {
+    const listed = await r.call("list", {});
+    assert.deepEqual(
+      listed.map((x) => x.agentId),
+      ["two"],
+    );
+    const task = await r.call("spawn", { agentId: "one", prompt: "ping" });
+    assert.equal((await done(r, task.taskId)).status, "completed");
+  } finally {
+    r.close();
+  }
 });
 test("background question/reply, bounded results, continuity, steering, inbox replay and durable load", async () => {
   const f = fixture();

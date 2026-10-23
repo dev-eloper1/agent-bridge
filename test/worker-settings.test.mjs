@@ -118,6 +118,25 @@ test("probe reports normalized options without prompting and kills the worker", 
   }
   assert.throws(() => process.kill(pid, 0), "worker process is dead");
 });
+test("probeAll skips internal profiles while direct probe still works", async () => {
+  const f = fixture({
+    hidden: {
+      provider: "mock",
+      description: "internal fixture",
+      workspace: "read-only",
+      internal: true,
+    },
+  });
+  const all = await probeAllAgentSettings(f.config);
+  assert.deepEqual(
+    all.map((p) => p.agentId),
+    ["demo", "gone", "deps", "crash"],
+  );
+  const direct = await probeAgentSettings(f.config, "hidden");
+  assert.equal(direct.agentId, "hidden");
+  assert.equal(direct.available, true);
+  assert.equal(direct.error, undefined);
+});
 test("legacy harnesses surface a legacy_mode option", async () => {
   const f = fixture({
     old: { provider: "legacy", description: "legacy", workspace: "project" },
