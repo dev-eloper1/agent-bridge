@@ -46,6 +46,7 @@ import {
   validateSpecialistBinding,
 } from "./specialists.js";
 import { startDashboard } from "./dashboard.js";
+import { buildId } from "./build-id.js";
 const taskId = z.string().regex(/^task_[a-f0-9-]{36}$/);
 const message = z.string().min(1).max(16000);
 export const inputs = {
@@ -170,6 +171,7 @@ export class Runtime {
   active = new Map<string, Active>();
   questions = new Map<string, Question>();
   closed = false;
+  readonly startedAt = now();
   dashboardServer?: Awaited<ReturnType<typeof startDashboard>>;
   dashboardStarting?: Promise<Awaited<ReturnType<typeof startDashboard>>>;
   constructor(readonly config: Config) {
@@ -333,7 +335,12 @@ export class Runtime {
           workspace: bound(this.config.root),
           stateDir: bound(this.config.stateDir),
           socket: bound(this.config.socket),
-          daemon: { pid: process.pid },
+          daemon: {
+            pid: process.pid,
+            buildId,
+            configDigest: this.config.configDigest,
+            startedAt: this.startedAt,
+          },
           runtime: {
             maxConcurrentTasks: this.config.runtime.maxConcurrentTasks,
             maxRuntimeMs: this.config.runtime.maxRuntimeMs,

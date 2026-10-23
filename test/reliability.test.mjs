@@ -14,6 +14,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { Runtime } from "../dist/runtime.js";
 import { loadConfig } from "../dist/config.js";
 import { remote } from "../dist/server.js";
+import { ensureRuntime } from "../dist/plugin.js";
 const root = process.cwd();
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, predicate, timeout = 9000) {
@@ -413,6 +414,9 @@ test("doctor reports sanitized configuration without environment values", async 
     assert.equal(d.workspace, realpathSync(f.dir));
     assert.equal(d.socket, f.config.socket);
     assert.equal(d.daemon.pid, process.pid);
+    assert.match(d.daemon.buildId, /^[a-f0-9]{64}$/);
+    assert.equal(d.daemon.configDigest, f.config.configDigest);
+    assert.ok(Date.parse(d.daemon.startedAt));
     assert.equal(d.runtime.maxConcurrentTasks, 2);
     assert.equal(d.agents.one.sessionConfig.mode, "bypass");
     assert.equal(d.providers.mock.command, process.execPath);
@@ -585,5 +589,138 @@ test("direct CLI doctor works through the generic runtime path", async () => {
       daemon.kill("SIGTERM");
       await new Promise((r) => daemon.once("exit", r)).catch(() => {});
     }
+  }
+});
+test("config digest is stable for identical resolved config and differs on change", () => {
+  const f = fixture();
+  assert.equal(loadConfig(f.file).configDigest, f.config.configDigest);
+  assert.match(f.config.configDigest, /^[a-f0-9]{64}$/);
+  const source = JSON.parse(readFileSync(f.file, "utf8"));
+  source.runtime.maxInlineChars = 501;
+  const file2 = path.join(f.dir, "agents-2.yaml");
+  writeFileSync(file2, JSON.stringify(source));
+  const changed = loadConfig(file2);
+  assert.notEqual(changed.configDigest, f.config.configDigest);
+  assert.equal(changed.socket, f.config.socket);
+});
+test("ensureRuntime reuses matching, restarts stale idle, and replaces doctorless daemons", async () => {
+  const f = fixture();
+  const lockDir = path.join(f.config.stateDir, "lock");
+  try {
+    assert.deepEqual(await ensureRuntime(f.file, f.config), {
+      status: "ready",
+      restarted: false,
+    });
+    assert.deepEqual(await ensureRuntime(f.file, f.config), {
+      status: "ready",
+      restarted: false,
+    });
+    const live = await remote(f.config, "doctor");
+    assert.equal(live.daemon.configDigest, f.config.configDigest);
+    const source = JSON.parse(readFileSync(f.file, "utf8"));
+    source.runtime.maxInlineChars = 700;
+    const file2 = path.join(f.dir, "agents-2.yaml");
+    writeFileSync(file2, JSON.stringify(source));
+    const changed = loadConfig(file2);
+    assert.deepEqual(await ensureRuntime(file2, changed), {
+      status: "ready",
+      restarted: true,
+    });
+    const restarted = await remote(changed, "doctor");
+    assert.equal(restarted.daemon.configDigest, changed.configDigest);
+    f.config = changed;
+    f.file = file2;
+  } finally {
+    try {
+      await remote(f.config, "shutdown").catch(() => {});
+      await until(
+        () => existsSync(lockDir),
+        (g) => !g,
+        5000,
+      ).catch(() => {});
+    } catch {}
+  }
+});
+test("a doctorless legacy daemon is replaced as stale", async () => {
+  const f = fixture();
+  const sock = f.config.socket;
+  const fake = spawn(
+    process.execPath,
+    [
+      "-e",
+      `require("http").createServer((req,res)=>{let b="";req.on("data",c=>b+=c);req.on("end",()=>{const {method}=JSON.parse(b);res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(method==="doctor"?{error:"Unknown method"}:{result:method==="list"?[]:{}}));if(method==="shutdown")setImmediate(()=>{try{require("fs").unlinkSync(${JSON.stringify(sock)})}catch{};process.exit(0)})})}).listen(${JSON.stringify(sock)})`,
+    ],
+    { stdio: "ignore" },
+  );
+  try {
+    await until(() => existsSync(sock), Boolean);
+    assert.deepEqual(await ensureRuntime(f.file, f.config), {
+      status: "ready",
+      restarted: true,
+    });
+    const live = await remote(f.config, "doctor");
+    assert.equal(live.daemon.configDigest, f.config.configDigest);
+  } finally {
+    fake.kill("SIGKILL");
+    try {
+      await remote(f.config, "shutdown").catch(() => {});
+      await until(
+        () => existsSync(path.join(f.config.stateDir, "lock")),
+        (g) => !g,
+        5000,
+      ).catch(() => {});
+    } catch {}
+  }
+});
+test("a stale daemon with active work defers updates then restarts once terminal", async () => {
+  const f = fixture();
+  const lockDir = path.join(f.config.stateDir, "lock");
+  try {
+    assert.deepEqual(await ensureRuntime(f.file, f.config), {
+      status: "ready",
+      restarted: false,
+    });
+    const a = await remote(f.config, "spawn", {
+      agentId: "one",
+      prompt: "SLOW",
+    });
+    await until(
+      () => remote(f.config, "status", { taskId: a.taskId }),
+      (t) => t.status === "running",
+    );
+    const source = JSON.parse(readFileSync(f.file, "utf8"));
+    source.runtime.maxInlineChars = 700;
+    const file2 = path.join(f.dir, "agents-2.yaml");
+    writeFileSync(file2, JSON.stringify(source));
+    const changed = loadConfig(file2);
+    const pending = await ensureRuntime(file2, changed);
+    assert.equal(pending.status, "update_pending");
+    assert.deepEqual(pending.activeTaskIds, [a.taskId]);
+    assert.equal(pending.desiredConfigDigest, changed.configDigest);
+    assert.equal(pending.liveConfigDigest, f.config.configDigest);
+    const status = await remote(f.config, "status", { taskId: a.taskId });
+    assert.equal(status.status, "running");
+    await remote(f.config, "cancel", { taskId: a.taskId });
+    await until(
+      () => remote(f.config, "status", { taskId: a.taskId }),
+      (t) => t.status === "cancelled",
+    );
+    assert.deepEqual(await ensureRuntime(file2, changed), {
+      status: "ready",
+      restarted: true,
+    });
+    const restarted = await remote(changed, "doctor");
+    assert.equal(restarted.daemon.configDigest, changed.configDigest);
+    f.config = changed;
+    f.file = file2;
+  } finally {
+    try {
+      await remote(f.config, "shutdown").catch(() => {});
+      await until(
+        () => existsSync(lockDir),
+        (g) => !g,
+        5000,
+      ).catch(() => {});
+    } catch {}
   }
 });

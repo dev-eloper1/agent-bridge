@@ -14,6 +14,12 @@ let paneFocus = "reader",
 let polling = false,
   flushing = false,
   interactive = false;
+let workspaceCwd,
+  settingsData,
+  settingsLoading = false,
+  settingsError,
+  settingsActionError,
+  settingsNotice;
 const terminal = (s) =>
   ["completed", "failed", "cancelled", "timed_out"].includes(s);
 function plain(value, max = 500) {
@@ -239,7 +245,33 @@ function unpack(value) {
   return unpack(value.content ?? value.result);
 }
 async function persist($) {
-  await $.store.set(key, state);
+  await $.store.set(
+    key,
+    state.screen === "settings" ? { ...state, screen: "overview" } : state,
+  );
+}
+async function runPluginCommand($, command, input) {
+  const args = ["node", $.plugin.root + "/dist/cli.js", command];
+  if (input !== undefined) args.push(JSON.stringify(input));
+  const result = await $.process.run(args, {
+    cwd: workspaceCwd,
+    timeoutMs: 120000,
+  });
+  if (result.exitCode !== 0) throw Error(result.stderr || `${command} failed`);
+  return JSON.parse(result.stdout);
+}
+async function refreshSettings($) {
+  settingsLoading = true;
+  $.ui.invalidate("ui.render");
+  try {
+    settingsData = await runPluginCommand($, "plugin-settings", {});
+    settingsError = undefined;
+  } catch (error) {
+    settingsError = plain(error.message, 300);
+  } finally {
+    settingsLoading = false;
+  }
+  $.ui.invalidate("ui.render");
 }
 async function call($, method, args = {}) {
   const response = await $.http.fetch("http://agent-bridge/call", {
@@ -520,6 +552,37 @@ async function handleWorkersCommand($, e) {
         text: "Worker runtime stopped; active work interrupted. Next delegation starts it again.",
       };
     }
+    if (argument === "settings") {
+      saveReadingPosition();
+      state.screen = "settings";
+      settingsLoading = true;
+      settingsError = undefined;
+      settingsActionError = undefined;
+      settingsNotice = undefined;
+      $.ui.invalidate("ui.render");
+      await openWorkerPane($, true);
+      try {
+        settingsData = await runPluginCommand($, "plugin-settings", {});
+      } catch (error) {
+        settingsError = plain(error.message, 300);
+      } finally {
+        settingsLoading = false;
+      }
+      $.ui.invalidate("ui.render");
+      return {
+        text: settingsError
+          ? "Worker settings: " + settingsError
+          : "Worker settings opened.",
+      };
+    }
+    if (argument === "back" && state.screen === "settings") {
+      saveReadingPosition();
+      state.screen = "overview";
+      await persist($);
+      $.ui.invalidate("ui.render");
+      await focusReading($);
+      return { text: "Back to workers." };
+    }
     if (
       e.viewTaskId &&
       [
@@ -635,7 +698,7 @@ async function handleWorkersCommand($, e) {
           : undefined;
       if (!id)
         return {
-          text: "Use /workers, /workers <name>, /workers <name>/1, or /workers history|watch|pause|next|prev|cancel|close|stop.",
+          text: "Use /workers, /workers <name>, /workers <name>/1, or /workers history|settings|watch|pause|next|prev|cancel|close|stop.",
         };
       tasks[id] = await call($, "status", { taskId: id });
       selectTask(id);
@@ -686,6 +749,12 @@ export function register(on) {
     outputPage = undefined;
     socket = undefined;
     interactive = e.isInteractive;
+    workspaceCwd = e.cwd;
+    settingsData = undefined;
+    settingsLoading = false;
+    settingsError = undefined;
+    settingsActionError = undefined;
+    settingsNotice = undefined;
     key = "agent-bridge:" + (await $.session.id());
     try {
       composerHasDraft = Boolean((await $.prompt.read()).text);
@@ -703,11 +772,13 @@ export function register(on) {
       : state.overview || !state.selected
         ? "overview"
         : "detail";
+    if (state.screen === "settings") state.screen = "overview";
     delete state.history;
     delete state.overview;
     await $.command.register({
       name: "workers",
-      description: "Browse worker activity, output, history and cancellation",
+      description:
+        "Browse worker activity, output, history, settings and cancellation",
     });
     try {
       const boot = await $.process.run(
@@ -841,6 +912,7 @@ export function register(on) {
             close: "× ",
             attention: "◆ ",
             history: "↶ ",
+            settings: "⚙ ",
             watch: "▶ ",
             pause: "‖ ",
           }[command] ?? "") + label,
@@ -902,6 +974,7 @@ export function register(on) {
       ...(attention.length
         ? [button("attention", `Needs input (${attention.length})`, "a")]
         : []),
+      button("settings", "Settings", "s"),
       ...(workers.length && pickers && ui.Select
         ? [
             ui.Select({
@@ -941,6 +1014,293 @@ export function register(on) {
         children: navigationChildren,
       },
     ];
+    if (state.screen === "settings") {
+      const data = settingsData;
+      const sources = data?.sources ?? {};
+      const explicit = sources.explicitEnvironment;
+      const readiness = data?.readiness;
+      const provenance = explicit
+        ? `Explicit operator config · ${plain(explicit, 160)}`
+        : sources.project
+          ? `Advanced project config · ${plain(sources.project, 160)}`
+          : sources.legacyGenerated
+            ? `Legacy generated config · ${plain(sources.legacyGenerated, 160)}`
+            : "Managed plugin defaults";
+      const pending = (readiness?.activeTaskIds ?? []).length;
+      const readinessText = !readiness
+        ? undefined
+        : readiness.status === "update_pending"
+          ? `Update pending · ${pending} active task${pending === 1 ? "" : "s"} keep the previous runtime`
+          : readiness.status === "error"
+            ? `Runtime unavailable · ${plain(readiness.error, 200)}`
+            : `Runtime ${readiness.status}${readiness.restarted ? " · restarted" : ""}`;
+      const envelopeClear = JSON.stringify({ action: "clear" });
+      const envelopeSet = (value) => JSON.stringify({ action: "set", value });
+      const applySetting = async (agent, option, raw) => {
+        let envelope;
+        try {
+          envelope = JSON.parse(raw);
+        } catch {
+          return;
+        }
+        try {
+          const result = await runPluginCommand(
+            $,
+            "plugin-configure",
+            envelope.action === "clear"
+              ? { agentId: agent.agentId, configId: option.id, clear: true }
+              : {
+                  agentId: agent.agentId,
+                  configId: option.id,
+                  value: envelope.value,
+                },
+          );
+          settingsNotice =
+            result.readiness?.status === "update_pending"
+              ? "Saved; applies when active tasks finish."
+              : "Setting saved.";
+          settingsActionError = undefined;
+        } catch (error) {
+          settingsActionError = plain(error.message, 300);
+        }
+        await refreshSettings($);
+      };
+      const editable = !explicit && pickers && ui.Select;
+      const settingChildren = (agent) =>
+        (agent.options ?? []).flatMap((option) => [
+          ...(option.description
+            ? [
+                text(plain(option.description, 240), {
+                  dimColor: true,
+                  wrap: "wrap",
+                }),
+              ]
+            : []),
+          editable
+            ? ui.Select({
+                key: `setting-${agent.agentId}-${option.id}`,
+                label: option.name,
+                value:
+                  agent.requested?.[option.id] !== undefined
+                    ? envelopeSet(agent.requested[option.id])
+                    : envelopeClear,
+                options: [
+                  {
+                    value: envelopeClear,
+                    label: `Provider default (${option.currentValue})`,
+                  },
+                  ...(option.type === "boolean"
+                    ? [
+                        { value: envelopeSet(false), label: "Disabled" },
+                        { value: envelopeSet(true), label: "Enabled" },
+                      ]
+                    : (option.choices ?? []).map((choice) => ({
+                        value: envelopeSet(choice.value),
+                        label: choice.description
+                          ? `${choice.name} · ${choice.description}`
+                          : choice.name,
+                      }))),
+                ],
+                onSelect: (value) => applySetting(agent, option, value),
+              })
+            : text(
+                `${option.name}: ${agent.requested?.[option.id] !== undefined ? JSON.stringify(agent.requested[option.id]) : `provider default (${option.currentValue})`}`,
+                { dimColor: true, wrap: "wrap" },
+              ),
+        ]);
+      const agents = (data?.agents ?? []).map((agent) => {
+        const requested = Object.entries(agent.requested ?? {});
+        const projectRequested = Object.entries(
+          data?.projectRequestedSessionConfig?.[agent.agentId] ?? {},
+        );
+        return {
+          type: "Box",
+          props: {
+            key: "settings-card-" + agent.agentId,
+            flexDirection: "column",
+            borderStyle: "round",
+            borderColor: agent.available && !agent.error ? "cyan" : "gray",
+            borderDimColor: !agent.available || !!agent.error,
+            paddingX: 1,
+            marginTop: 1,
+          },
+          children: [
+            text(`${agent.agentId} · ${agent.provider}`, { bold: true }),
+            text(plain(agent.description, 160), {
+              dimColor: true,
+              wrap: "wrap",
+            }),
+            text(
+              !agent.available
+                ? `Unavailable${agent.error ? " · " + plain(agent.error, 160) : ""}`
+                : agent.error
+                  ? `Probe failed · ${plain(agent.error, 160)}`
+                  : "Available",
+              { color: !agent.available || agent.error ? "yellow" : "cyan" },
+            ),
+            ...(agent.readOnlyEnforced
+              ? [text("Provider-enforced read-only", { dimColor: true })]
+              : []),
+            ...(requested.length
+              ? [
+                  text(
+                    "Saved: " +
+                      requested
+                        .map(
+                          ([key, value]) => `${key}=${JSON.stringify(value)}`,
+                        )
+                        .join(", "),
+                    { dimColor: true, wrap: "wrap" },
+                  ),
+                ]
+              : []),
+            ...(projectRequested.length
+              ? [
+                  text(
+                    "Project requests (not applied): " +
+                      projectRequested
+                        .map(
+                          ([key, value]) => `${key}=${JSON.stringify(value)}`,
+                        )
+                        .join(", "),
+                    { color: "yellow", dimColor: true, wrap: "wrap" },
+                  ),
+                ]
+              : []),
+            ...(agent.available && !agent.error && !(agent.options ?? []).length
+              ? [
+                  text("This provider advertises no editable settings.", {
+                    dimColor: true,
+                  }),
+                ]
+              : []),
+            ...(explicit ? [] : settingChildren(agent)),
+          ],
+        };
+      });
+      return {
+        type: "Box",
+        props: { flexDirection: "column" },
+        children: [
+          ...navigation,
+          heading("WORKER SETTINGS", "⚙"),
+          ...(settingsLoading
+            ? [text("Probing worker settings…", { dimColor: true })]
+            : []),
+          ...(settingsActionError
+            ? [
+                text(plain(settingsActionError, 300), {
+                  color: "red",
+                  wrap: "wrap",
+                }),
+              ]
+            : settingsError
+              ? [
+                  text(plain(settingsError, 300), {
+                    color: "red",
+                    wrap: "wrap",
+                  }),
+                ]
+              : []),
+          ...(settingsNotice
+            ? [
+                text(plain(settingsNotice, 300), {
+                  color: "cyan",
+                  wrap: "wrap",
+                }),
+              ]
+            : []),
+          ...(data
+            ? [
+                text(provenance, { dimColor: true, wrap: "wrap" }),
+                text(`Preferences · ${plain(data.preferencesFile, 200)}`, {
+                  dimColor: true,
+                  wrap: "wrap",
+                }),
+                ...(readinessText
+                  ? [
+                      text(readinessText, {
+                        color:
+                          readiness.status === "error"
+                            ? "red"
+                            : readiness.status === "update_pending"
+                              ? "yellow"
+                              : "cyan",
+                        wrap: "wrap",
+                      }),
+                    ]
+                  : []),
+                ...(data.migrationWarnings ?? []).map((warning) =>
+                  text(plain(warning, 240), {
+                    color: "yellow",
+                    wrap: "wrap",
+                  }),
+                ),
+                ...(explicit
+                  ? [
+                      text(
+                        `Settings in ${plain(explicit, 160)} are managed by its operator. Edit that config directly; workspace preferences do not apply.`,
+                        { color: "yellow", wrap: "wrap" },
+                      ),
+                    ]
+                  : []),
+                ...agents,
+                ...(data.agents?.length
+                  ? []
+                  : [
+                      text("No worker profiles configured.", {
+                        dimColor: true,
+                      }),
+                    ]),
+                ...(editable
+                  ? []
+                  : explicit
+                    ? []
+                    : [
+                        text(
+                          "Setting values are provider-owned. Manage them from a terminal:",
+                          { dimColor: true, wrap: "wrap" },
+                        ),
+                        text("node dist/cli.js plugin-settings", {
+                          dimColor: true,
+                          wrap: "wrap",
+                        }),
+                        text(
+                          'node dist/cli.js plugin-configure \'{"agentId":"<profile>","configId":"<option>","value":<value>}\'',
+                          { dimColor: true, wrap: "wrap" },
+                        ),
+                      ]),
+                ...((sources.project || sources.legacyGenerated) && !explicit
+                  ? [
+                      ui.Button({
+                        key: "workers-migrate-managed",
+                        label: "Use managed plugin defaults",
+                        onPress: async () => {
+                          try {
+                            const result = await runPluginCommand(
+                              $,
+                              "plugin-migrate-managed",
+                            );
+                            settingsNotice =
+                              result.readiness?.status === "update_pending"
+                                ? "Managed defaults saved; applies when active tasks finish."
+                                : "Managed plugin defaults applied.";
+                            settingsActionError = undefined;
+                          } catch (error) {
+                            settingsActionError = plain(error.message, 300);
+                          }
+                          await refreshSettings($);
+                        },
+                      }),
+                    ]
+                  : []),
+              ]
+            : []),
+          button("back", "Back to workers", "b", { autoFocus: true }),
+          button("close", "Close", "q"),
+        ],
+      };
+    }
     const history = state.screen === "history" && selectedWorker;
     if (history)
       return {

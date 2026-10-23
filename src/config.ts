@@ -90,6 +90,7 @@ export type Config = z.infer<typeof schema> & {
   stateDir: string;
   socket: string;
   sourceFile: string;
+  configDigest: string;
 };
 export function loadConfig(file = "agents.yaml"): Config {
   const sourceFile = realpathSync(path.resolve(file));
@@ -130,5 +131,18 @@ export function loadConfig(file = "agents.yaml"): Config {
         ".sock",
     );
   }
-  return { ...c, specialistCatalogs, root, stateDir, socket, sourceFile };
+  const configDigest = createHash("sha256")
+    .update(
+      JSON.stringify({ ...c, specialistCatalogs, root, stateDir, socket }),
+    )
+    .digest("hex");
+  return {
+    ...c,
+    specialistCatalogs,
+    root,
+    stateDir,
+    socket,
+    sourceFile,
+    configDigest,
+  };
 }
