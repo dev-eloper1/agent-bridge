@@ -8,7 +8,7 @@ Agent Bridge is a Claude Code plugin for delegating to **Devin, Pi, Codex, Curso
 
 The plugin combines delegation skills, MCP tools and a Claude Mod interface. It starts a small local runtime automatically and reuses your installed CLIs and their existing authentication. It uses **Agent Client Protocol (ACP)** and pinned adapters rather than building another coding-agent framework.
 
-**Current checkpoint: 0.5.2 · Local prototype · 139 runtime tests + 38 Mod-host tests passing.** Live provider results and their limits are recorded in [validation](docs/VALIDATION.md) and the [provider matrix](docs/PROVIDERS.md).
+**Current checkpoint: 0.5.2 · Local prototype · 139 runtime tests + 43 Mod-host tests passing.** Live provider results and their limits are recorded in [validation](docs/VALIDATION.md) and the [provider matrix](docs/PROVIDERS.md).
 
 [Quick start](#quick-start) · [Usage](#delegate-in-your-own-words) · [Worker inspector](#watch-and-navigate) · [Architecture](#how-it-works) · [Limitations](#current-boundaries) · [Roadmap](#where-this-goes-next)
 
@@ -139,7 +139,7 @@ Folder selection is separate from tool permissions. Claude passes relevant task/
 
 While work runs, the Mod shows compact provider-reported tools/files above the prompt. Clicking a worker opens its details. **All workers** or `/workers` opens the overview with stable conversation names, status, assignment previews and search. Completed workers stay in the overview, with each assignment's report retained.
 
-The pane has separate worker navigation and report-page controls. Switching workers/tasks preserves the bounded report page and live/paused state. Automatic pane placement depends on terminal space; `/workers watch` is an explicit request to open it.
+The pane has separate worker navigation and report-page controls. Switching workers/tasks preserves the bounded report page and live/paused state. Automatic pane placement depends on terminal space; `/workers watch` is an explicit request to open it. A blocked task shows an **Input required** section with the worker's request and pending command details, plus direct **Allow once**/**Reject** buttons for permissions or a reply field for questions — no round trip through Claude; persistent permission choices still belong in `/workers settings`.
 
 | Action                            | Control                                                   |
 | --------------------------------- | --------------------------------------------------------- |
@@ -155,6 +155,7 @@ The pane has separate worker navigation and report-page controls. Switching work
 | Return typing to Claude           | Esc, leaving the pane open                                |
 | Close the pane                    | `/workers close` or Close; tasks continue                 |
 | Cancel the selected task          | `/workers cancel`                                         |
+| Answer a blocked worker           | **Allow once** / **Reject** buttons or the Reply field    |
 | Profile settings                  | `/workers settings` or the Settings button                |
 
 Native arrows can navigate focused controls, so use Page Up/Page Down for dependable content scrolling. Hotkeys apply while the pane holds focus. The idle worker strip/status disappear; typing a draft hides active band controls so slash-command menus remain clear. Public output is what the provider exposes, not hidden model reasoning or a full interactive mirror of its native CLI.
@@ -210,7 +211,7 @@ npm run smoke:providers       # Live provider suite; uses your configured accoun
 npm run smoke:claude-plugin -- --codex-review
 ```
 
-At this checkpoint, **139 runtime tests and 38 Mod-host tests pass**. Live interface checks covered Back, Escape, slash-command navigation and Page Down scrolling. Previously recorded live runs passed conversation continuity/native recovery on all seven providers; six passed scoped code edits with independent checks, and Pi passed read-only review. Those are dated observations, not continuous compatibility guarantees. Paid provider runs were not repeated for the UI checkpoint.
+At this checkpoint, **139 runtime tests and 43 Mod-host tests pass**. Live interface checks covered Back, Escape, slash-command navigation and Page Down scrolling. Previously recorded live runs passed conversation continuity/native recovery on all seven providers; six passed scoped code edits with independent checks, and Pi passed read-only review. Those are dated observations, not continuous compatibility guarantees. Paid provider runs were not repeated for the UI checkpoint.
 
 Known boundaries:
 
