@@ -139,7 +139,8 @@ Workspace identity checks are included in this release. Validation: 29 offline t
 - [x] Add `plugin-settings`/`plugin-configure`/`plugin-migrate-managed` human operations (CLI only, never MCP tools) with strict validation and fail-closed writes.
 - [x] Ship `/workers settings` in the Mod: provenance, readiness, profile cards, native selects, managed migration, explicit-env read-only and mobile CLI fallback.
 - [x] Safe legacy migration: matching generated configs import runtime/session preferences and stay managed; provider-different legacy configs are retained as base with warnings.
-- [x] Pass 122 runtime tests and 33 Mod-host tests; explicit `AGENT_BRIDGE_CONFIG` stays operator-managed read-only.
+- [x] Pass 137 runtime tests and 38 Mod-host tests; explicit `AGENT_BRIDGE_CONFIG` stays operator-managed read-only.
+- [x] Ship `npm run update:plugin`: fast-forward-only main update that preserves uncommitted changes, rebuilds, verifies and refreshes the installed plugin.
 
 ## Next milestone: specialized agents (after interface stabilization)
 

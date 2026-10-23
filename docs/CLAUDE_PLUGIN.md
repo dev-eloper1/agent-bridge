@@ -21,11 +21,13 @@ npm run build
 claude plugin install agent-bridge --marketplace /Users/bhushan/Documents/Projects/agent-bridge --scope user
 ```
 
-To update an installed copy after building:
+To update an installed copy:
 
 ```sh
-claude plugin update agent-bridge@agent-bridge-local --scope user
+npm run update:plugin
 ```
+
+The command requires the `main` branch, fetches `origin/main` and applies fast-forward merges only — it refuses when local commits are ahead and never rebases, resets or stashes; uncommitted local changes are preserved and included in the build. It then rebuilds (`npm ci` + `npm run build`), verifies `agent-bridge@agent-bridge-local` is installed and enabled, and runs `claude plugin update`. If the plugin is not installed it prints the exact install command instead of installing it. The equivalent manual `claude plugin update agent-bridge@agent-bridge-local --scope user` remains a troubleshooting fallback.
 
 Restart Claude Code or run `/reload-plugins`. Updated plugin defaults compile into each project's effective config automatically: a stale idle daemon restarts itself on the next call, and active tasks keep their current runtime until they finish. `/workers stop` is only an explicit interrupt, not an update step. For development, start Claude with `--plugin-dir /Users/bhushan/Documents/Projects/agent-bridge` from your target folder.
 

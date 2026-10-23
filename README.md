@@ -8,7 +8,7 @@ Agent Bridge is a Claude Code plugin for delegating to **Devin, Pi, Codex, Curso
 
 The plugin combines delegation skills, MCP tools and a Claude Mod interface. It starts a small local runtime automatically and reuses your installed CLIs and their existing authentication. It uses **Agent Client Protocol (ACP)** and pinned adapters rather than building another coding-agent framework.
 
-**Current checkpoint: 0.5.2 · Local prototype · 124 runtime tests + 38 Mod-host tests passing.** Live provider results and their limits are recorded in [validation](docs/VALIDATION.md) and the [provider matrix](docs/PROVIDERS.md).
+**Current checkpoint: 0.5.2 · Local prototype · 137 runtime tests + 38 Mod-host tests passing.** Live provider results and their limits are recorded in [validation](docs/VALIDATION.md) and the [provider matrix](docs/PROVIDERS.md).
 
 [Quick start](#quick-start) · [Usage](#delegate-in-your-own-words) · [Worker inspector](#watch-and-navigate) · [Architecture](#how-it-works) · [Limitations](#current-boundaries) · [Roadmap](#where-this-goes-next)
 
@@ -60,13 +60,13 @@ No separate daemon terminal or manual MCP registration is needed. Agent Bridge f
 
 Before your first delegated worker, open `/workers settings` to review each profile's provider-advertised options and choose values once — they are stored as private per-workspace preferences, not in your project files.
 
-To update an installed copy after pulling changes:
+To update an installed copy, run:
 
 ```sh
-npm ci
-npm run build
-claude plugin update agent-bridge@agent-bridge-local --scope user
+npm run update:plugin
 ```
+
+It requires the `main` branch, fetches `origin/main` and applies only fast-forward updates (local commits are never rebased or discarded, and uncommitted local changes are preserved and included in the build), rebuilds with `npm ci` + `npm run build`, verifies the installed plugin and runs `claude plugin update`. Manual `claude plugin update agent-bridge@agent-bridge-local --scope user` remains available as a troubleshooting fallback.
 
 Then reload plugins or restart Claude. Updated defaults compile into the project's effective config automatically: a stale idle daemon restarts on its own, while active tasks keep the previous runtime until they finish — no manual restart is needed. `/workers stop` remains an explicit interrupt. A UI-only update does not require stopping workers. [Full installation and update guide](docs/CLAUDE_PLUGIN.md).
 
@@ -208,7 +208,7 @@ npm run smoke:providers       # Live provider suite; uses your configured accoun
 npm run smoke:claude-plugin -- --codex-review
 ```
 
-At this checkpoint, **124 runtime tests and 38 Mod-host tests pass**. Live interface checks covered Back, Escape, slash-command navigation and Page Down scrolling. Previously recorded live runs passed conversation continuity/native recovery on all seven providers; six passed scoped code edits with independent checks, and Pi passed read-only review. Those are dated observations, not continuous compatibility guarantees. Paid provider runs were not repeated for the UI checkpoint.
+At this checkpoint, **137 runtime tests and 38 Mod-host tests pass**. Live interface checks covered Back, Escape, slash-command navigation and Page Down scrolling. Previously recorded live runs passed conversation continuity/native recovery on all seven providers; six passed scoped code edits with independent checks, and Pi passed read-only review. Those are dated observations, not continuous compatibility guarantees. Paid provider runs were not repeated for the UI checkpoint.
 
 Known boundaries:
 
