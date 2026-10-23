@@ -164,7 +164,9 @@ function setup(on) {
   };
   const configureCalls = [],
     migrateCalls = [],
-    processCommands = [];
+    processCommands = [],
+    replyCalls = [];
+  const replyError = { value: undefined };
   const configureResult = {
     value: {
       exitCode: 0,
@@ -264,6 +266,28 @@ function setup(on) {
       result = allTasks.find((t) => t.taskId === request.args.taskId);
       result.status = "cancelled";
     }
+    if (request.method === "reply") {
+      replyCalls.push(request.args);
+      if (replyError.value)
+        return {
+          value: {
+            status: 200,
+            ok: true,
+            headers: {},
+            text: JSON.stringify({ error: replyError.value }),
+          },
+        };
+      const blocked = allTasks.find(
+        (t) =>
+          t.taskId === request.args.taskId &&
+          t.question?.questionId === request.args.questionId,
+      );
+      if (blocked) {
+        blocked.status = "running";
+        delete blocked.question;
+      }
+      result = { accepted: true };
+    }
     return {
       value: {
         status: 200,
@@ -313,6 +337,8 @@ function setup(on) {
     registered,
     configureCalls,
     migrateCalls,
+    replyCalls,
+    replyError,
     processCommands,
     configureResult,
   };
@@ -933,7 +959,7 @@ async function mountInspector($, width = 65, surface = "terminal") {
 }
 async function dispatch($, env, task) {
   env.allTasks.push(task);
-  env.dispatches.push(task);
+  env.dispatches.unshift(task);
   await $.tool.call({
     tool: "mcp__plugin_agent-bridge_workers__agents_spawn",
     input: {},
@@ -1923,4 +1949,224 @@ test("/workers registers an argument hint and /workers help needs no runtime", a
   expect(env.requests.length).toBe(calls);
   expect(env.processCommands.length).toBe(commands);
   expect(env.opened.length).toBe(opens);
+});
+
+test("blocked permission detail renders request context and direct allow/reject controls", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  await dispatch($, env, {
+    ...env.task,
+    taskId: "task_permission",
+    agentSessionId: "conversation_permission",
+    workerName: "devin-authentication",
+    status: "blocked_on_input",
+    description: "Authentication fix",
+    question: {
+      questionId: "q_perm",
+      kind: "permission",
+      summary: "Allow writing the fixture file?",
+      options: [
+        { optionId: "allow-1", kind: "allow_once", name: "Allow once" },
+        { optionId: "reject-1", kind: "reject_once", name: "Reject" },
+        { optionId: "always-1", kind: "allow_always", name: "Always allow" },
+      ],
+      toolCall: {
+        toolCallId: "tc1",
+        title: "Write fixture file",
+        kind: "edit",
+        input: "cat > fixture.txt",
+      },
+    },
+  });
+  await $.command.run({ command: "workers", args: "devin-authentication" });
+  const pane = await mountInspector($);
+  const text = await paneAllText(pane);
+  expect(text).toContain("INPUT REQUIRED");
+  expect(text).toContain("Allow writing the fixture file?");
+  expect(text).toContain("Write fixture file");
+  expect(text).toContain("Command/input: cat > fixture.txt");
+  expect(text).toContain(
+    "Persistent permission choices belong in /workers settings.",
+  );
+  expect(
+    await pane.find({ type: "Button", key: "workers-question-allow-1" }),
+  ).toBeDefined();
+  expect(
+    await pane.find({ type: "Button", key: "workers-question-reject-1" }),
+  ).toBeDefined();
+  expect(
+    await pane.find({ type: "Button", key: "workers-question-always-1" }),
+  ).toBeUndefined();
+  expect(
+    await pane.find({ type: "Button", key: "workers-cancel" }),
+  ).toBeDefined();
+  await pane.press({ key: "workers-question-allow-1" });
+  expect(env.replyCalls.at(-1)).toEqual({
+    taskId: "task_permission",
+    questionId: "q_perm",
+    optionId: "allow-1",
+  });
+  expect(env.allTasks.find((t) => t.taskId === "task_permission").status).toBe(
+    "running",
+  );
+  await pane.unmount();
+  const after = await mountInspector($);
+  expect(await paneAllText(after)).not.toContain("INPUT REQUIRED");
+  await after.unmount();
+  await $.command.run({ command: "workers", args: "" });
+  const board = await paneText($);
+  expect(board).toContain("0 needs input");
+});
+
+test("reject option sends its exact optionId", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  await dispatch($, env, {
+    ...env.task,
+    taskId: "task_permission",
+    agentSessionId: "conversation_permission",
+    workerName: "devin-authentication",
+    status: "blocked_on_input",
+    description: "Authentication fix",
+    question: {
+      questionId: "q_perm",
+      kind: "permission",
+      summary: "Allow?",
+      options: [
+        { optionId: "allow-1", kind: "allow_once", name: "Allow once" },
+        { optionId: "reject-1", kind: "reject_once", name: "Reject" },
+      ],
+    },
+  });
+  await $.command.run({ command: "workers", args: "devin-authentication" });
+  const pane = await mountInspector($);
+  await pane.press({ key: "workers-question-reject-1" });
+  expect(env.replyCalls.at(-1)).toEqual({
+    taskId: "task_permission",
+    questionId: "q_perm",
+    optionId: "reject-1",
+  });
+  await pane.unmount();
+});
+
+test("a failed reply keeps the blocked task, shows a bounded error and keeps controls", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  await dispatch($, env, {
+    ...env.task,
+    taskId: "task_permission",
+    agentSessionId: "conversation_permission",
+    workerName: "devin-authentication",
+    status: "blocked_on_input",
+    description: "Authentication fix",
+    question: {
+      questionId: "q_perm",
+      kind: "permission",
+      summary: "Allow?",
+      options: [
+        { optionId: "allow-1", kind: "allow_once", name: "Allow once" },
+        { optionId: "reject-1", kind: "reject_once", name: "Reject" },
+      ],
+    },
+  });
+  env.replyError.value = "Reply rejected: " + "x".repeat(500) + "_SENTINEL";
+  await $.command.run({ command: "workers", args: "devin-authentication" });
+  const pane = await mountInspector($);
+  await pane.press({ key: "workers-question-allow-1" });
+  await pane.unmount();
+  const after = await mountInspector($);
+  const text = await paneAllText(after);
+  expect(text).toContain("INPUT REQUIRED");
+  expect(text).toContain("Reply rejected:");
+  expect(text).not.toContain("_SENTINEL");
+  expect(
+    await after.find({ type: "Button", key: "workers-question-allow-1" }),
+  ).toBeDefined();
+  expect(env.allTasks.find((t) => t.taskId === "task_permission").status).toBe(
+    "blocked_on_input",
+  );
+  await after.unmount();
+});
+
+test("input questions render a reply field, submit a message and degrade on mobile", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  await dispatch($, env, {
+    ...env.task,
+    taskId: "task_input",
+    agentSessionId: "conversation_input",
+    workerName: "devin-question",
+    status: "blocked_on_input",
+    description: "Clarification needed",
+    question: {
+      questionId: "q_input",
+      kind: "input",
+      summary: "Which file should the fix target?",
+    },
+  });
+  await $.command.run({ command: "workers", args: "devin-question" });
+  const mobile = await mountInspector($, 38, "mobile");
+  expect(
+    await mobile.find({ type: "Input", key: "worker-question-reply" }),
+  ).toBeUndefined();
+  expect(await paneAllText(mobile)).toContain(
+    "Return to Claude and ask it to answer this worker question.",
+  );
+  await mobile.unmount();
+  const pane = await mountInspector($);
+  expect(
+    await pane.find({ type: "Input", key: "worker-question-reply" }),
+  ).toBeDefined();
+  const callsBefore = env.replyCalls.length;
+  await pane.press({ key: "workers-question-submit" });
+  expect(env.replyCalls.length).toBe(callsBefore);
+  await pane.input({
+    key: "worker-question-reply",
+    text: "src/app.ts",
+    kind: "change",
+  });
+  await pane.press({ key: "workers-question-submit" });
+  expect(env.replyCalls.at(-1)).toEqual({
+    taskId: "task_input",
+    questionId: "q_input",
+    message: "src/app.ts",
+  });
+  await pane.unmount();
+});
+
+test("question command context stays bounded under control characters and long input", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  const hostile = "x".repeat(5000) + "\x00\x1b[31m\nMALICIOUS";
+  await dispatch($, env, {
+    ...env.task,
+    taskId: "task_longq",
+    agentSessionId: "conversation_longq",
+    workerName: "devin-long",
+    status: "blocked_on_input",
+    description: "Long input question",
+    question: {
+      questionId: "q_long",
+      kind: "permission",
+      summary: "Allow?",
+      options: [
+        { optionId: "allow-1", kind: "allow_once", name: "Allow once" },
+      ],
+      toolCall: {
+        toolCallId: "tc",
+        title: "Run",
+        kind: "exec",
+        input: hostile,
+      },
+    },
+  });
+  await $.command.run({ command: "workers", args: "devin-long" });
+  const pane = await mountInspector($);
+  const text = await paneAllText(pane);
+  expect(text).toContain("INPUT REQUIRED");
+  expect(text).toContain("Command/input:");
+  expect(text).not.toContain("MALICIOUS");
+  expect(text).not.toContain("\x1b[31m");
+  expect(text.length).toBeLessThan(5000 + 2000 + 3000);
+  await pane.unmount();
 });

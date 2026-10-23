@@ -20,7 +20,9 @@ let workspaceCwd,
   settingsError,
   settingsActionError,
   settingsNotice,
-  settingsChoicePages = {};
+  settingsChoicePages = {},
+  questionDrafts = {},
+  questionErrors = {};
 const MAX_NATIVE_SELECT_OPTIONS = 64;
 const SETTINGS_CHOICE_PAGE_SIZE = 60;
 const terminal = (s) =>
@@ -275,6 +277,24 @@ async function refreshSettings($) {
     settingsLoading = false;
   }
   $.ui.invalidate("ui.render");
+}
+async function replyToQuestion($, task, payload) {
+  const taskId = task.taskId;
+  try {
+    await call($, "reply", {
+      taskId,
+      questionId: task.question?.questionId,
+      ...payload,
+    });
+    tasks[taskId] = await call($, "status", { taskId });
+    delete questionDrafts[taskId];
+    delete questionErrors[taskId];
+    await persist($);
+    $.ui.invalidate("ui.render");
+  } catch (error) {
+    questionErrors[taskId] = plain(error.message, 300);
+    $.ui.invalidate("ui.render");
+  }
 }
 async function call($, method, args = {}) {
   const response = await $.http.fetch("http://agent-bridge/call", {
@@ -775,6 +795,8 @@ export function register(on) {
     settingsActionError = undefined;
     settingsNotice = undefined;
     settingsChoicePages = {};
+    questionDrafts = {};
+    questionErrors = {};
     key = "agent-bridge:" + (await $.session.id());
     try {
       composerHasDraft = Boolean((await $.prompt.read()).text);
@@ -1723,9 +1745,128 @@ export function register(on) {
           : [text("Waiting for provider tool updates…", { dimColor: true })]),
         ...(task.question
           ? [
-              text("Needs input: " + plain(task.question.summary, 300), {
-                color: "yellow",
-              }),
+              {
+                type: "Box",
+                props: {
+                  key: "worker-question",
+                  flexDirection: "column",
+                  borderStyle: "round",
+                  borderColor: "yellow",
+                  paddingX: 1,
+                  marginTop: 1,
+                  marginBottom: 1,
+                  gap: 1,
+                },
+                children: [
+                  text("INPUT REQUIRED", { color: "yellow", bold: true }),
+                  ...(task.question.summary
+                    ? [
+                        text(plain(task.question.summary, 500), {
+                          wrap: "wrap",
+                        }),
+                      ]
+                    : []),
+                  ...(task.question.toolCall
+                    ? [
+                        text(plain(task.question.toolCall.title ?? "", 240), {
+                          dimColor: true,
+                          wrap: "wrap",
+                        }),
+                        text(plain(task.question.toolCall.kind ?? "", 80), {
+                          dimColor: true,
+                        }),
+                        text(
+                          "Command/input: " +
+                            plain(
+                              typeof task.question.toolCall.input === "string"
+                                ? task.question.toolCall.input
+                                : JSON.stringify(
+                                    task.question.toolCall.input ?? "",
+                                  ),
+                              2000,
+                            ),
+                          { wrap: "wrap" },
+                        ),
+                      ]
+                    : []),
+                  ...(questionErrors[task.taskId]
+                    ? [
+                        text(plain(questionErrors[task.taskId], 300), {
+                          color: "red",
+                          wrap: "wrap",
+                        }),
+                      ]
+                    : []),
+                  ...(task.question.kind === "permission"
+                    ? [
+                        ...(task.question.options ?? [])
+                          .filter((o) =>
+                            ["allow_once", "reject_once"].includes(o.kind),
+                          )
+                          .map((o) =>
+                            ui.Button({
+                              key: `workers-question-${o.optionId}`,
+                              label: `${o.kind === "allow_once" ? "Allow once" : "Reject"} · ${plain(o.name ?? o.optionId, 120)}`,
+                              onPress: async () =>
+                                replyToQuestion($, task, {
+                                  optionId: o.optionId,
+                                }),
+                            }),
+                          ),
+                        ...((task.question.options ?? []).some(
+                          (o) =>
+                            !["allow_once", "reject_once"].includes(o.kind),
+                        )
+                          ? [
+                              text(
+                                "Persistent permission choices belong in /workers settings.",
+                                { dimColor: true },
+                              ),
+                            ]
+                          : []),
+                      ]
+                    : []),
+                  ...(task.question.kind === "input"
+                    ? pickers && ui.Input
+                      ? [
+                          ui.Input({
+                            key: "worker-question-reply",
+                            label: "Reply",
+                            value: questionDrafts[task.taskId] ?? "",
+                            onInput: async (value) => {
+                              questionDrafts[task.taskId] = plain(value, 1000);
+                              $.ui.invalidate("ui.render");
+                            },
+                            onSubmit: async (value) => {
+                              const message = plain(value, 1000).trim();
+                              if (message)
+                                await replyToQuestion($, task, { message });
+                            },
+                          }),
+                          ui.Button({
+                            key: "workers-question-submit",
+                            label: "Submit reply",
+                            dimColor: !(
+                              questionDrafts[task.taskId] ?? ""
+                            ).trim(),
+                            onPress: async () => {
+                              const message = (
+                                questionDrafts[task.taskId] ?? ""
+                              ).trim();
+                              if (message)
+                                await replyToQuestion($, task, { message });
+                            },
+                          }),
+                        ]
+                      : [
+                          text(
+                            "Return to Claude and ask it to answer this worker question.",
+                            { dimColor: true, wrap: "wrap" },
+                          ),
+                        ]
+                    : []),
+                ],
+              },
             ]
           : []),
         heading(
