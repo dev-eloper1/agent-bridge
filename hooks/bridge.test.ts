@@ -123,6 +123,17 @@ function setup(on) {
               currentValue: false,
               source: "config_option",
             },
+            {
+              id: "model",
+              name: "Model",
+              type: "select",
+              currentValue: "model-0",
+              source: "config_option",
+              choices: Array.from({ length: 100 }, (_, i) => ({
+                value: `model-${i}`,
+                name: `model-${i}`,
+              })),
+            },
           ],
         },
         {
@@ -1691,4 +1702,193 @@ test("the settings screen is never persisted nor restored after a new session", 
   const text = await paneText($);
   expect(text).not.toContain("WORKER SETTINGS");
   expect(text).toContain("Select a worker");
+});
+
+test("large select catalogs page within the native option cap", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  await $.command.run({ command: "workers", args: "settings" });
+  const pane = await mountInspector($);
+  const text = await paneAllText(pane);
+  expect(text).toContain("WORKER SETTINGS");
+  expect(text).toContain("demo · mock");
+  for (const key of [
+    "setting-demo-mode",
+    "setting-demo-telemetry",
+    "setting-demo-model",
+  ]) {
+    const select = await pane.find({ type: "Select", key });
+    expect(select).toBeDefined();
+    expect(select?.props.options.length).toBeLessThanOrEqual(64);
+  }
+  const model = await pane.find({
+    type: "Select",
+    key: "setting-demo-model",
+  });
+  expect(model?.props.value).toBe(JSON.stringify({ action: "clear" }));
+  const labels = model?.props.options.map((option) => option.label) ?? [];
+  expect(labels[0]).toBe("Provider default (model-0)");
+  expect(labels).toContain("model-0");
+  expect(labels).toContain("model-59");
+  expect(labels).not.toContain("model-60");
+  expect(labels).not.toContain("model-99");
+  expect(text).toContain("Choices 1-60 of 100");
+  expect(
+    await pane.find({ type: "Button", key: "settings-prev-demo-model" }),
+  ).toBeUndefined();
+  expect(
+    await pane.find({ type: "Button", key: "settings-next-demo-model" }),
+  ).toBeDefined();
+  const configures = env.configureCalls.length;
+  await pane.press({ key: "settings-next-demo-model" });
+  await pane.unmount();
+  expect(env.configureCalls.length).toBe(configures);
+
+  const second = await mountInspector($);
+  const secondText = await paneAllText(second);
+  expect(secondText).toContain("Choices 61-100 of 100");
+  const page2 = await second.find({
+    type: "Select",
+    key: "setting-demo-model",
+  });
+  const page2Labels = page2?.props.options.map((option) => option.label) ?? [];
+  expect(page2?.props.options.length).toBeLessThanOrEqual(64);
+  expect(page2Labels).toContain("model-60");
+  expect(page2Labels).toContain("model-99");
+  expect(page2Labels).not.toContain("model-0");
+  expect(page2Labels).not.toContain("model-59");
+  expect(
+    await second.find({ type: "Button", key: "settings-prev-demo-model" }),
+  ).toBeDefined();
+  expect(
+    await second.find({ type: "Button", key: "settings-next-demo-model" }),
+  ).toBeUndefined();
+  await second.press({ key: "settings-prev-demo-model" });
+  await second.unmount();
+
+  const back = await mountInspector($);
+  expect(await paneAllText(back)).toContain("Choices 1-60 of 100");
+  const first = await back.find({ type: "Select", key: "setting-demo-model" });
+  expect(first?.props.options.map((option) => option.label)).toContain(
+    "model-0",
+  );
+  await back.unmount();
+});
+
+test("a saved choice outside the current page stays pinned and selectable", async ($, on) => {
+  const env = setup(on);
+  env.settingsData.value = {
+    ...env.settingsData.value,
+    agents: env.settingsData.value.agents.map((agent) =>
+      agent.agentId === "demo"
+        ? { ...agent, requested: { ...agent.requested, model: "model-99" } }
+        : agent,
+    ),
+  };
+  await start($);
+  await $.command.run({ command: "workers", args: "settings" });
+  const pane = await mountInspector($);
+  const text = await paneAllText(pane);
+  expect(text).toContain("WORKER SETTINGS");
+  expect(text).toContain('Saved: mode="bypass", model="model-99"');
+  const model = await pane.find({
+    type: "Select",
+    key: "setting-demo-model",
+  });
+  const savedEnvelope = JSON.stringify({ action: "set", value: "model-99" });
+  expect(model?.props.value).toBe(savedEnvelope);
+  expect(model?.props.options.length).toBeLessThanOrEqual(64);
+  const labels = model?.props.options.map((option) => option.label) ?? [];
+  expect(labels).toContain("model-99");
+  expect(labels).toContain("model-0");
+  expect(labels).toContain("model-59");
+  expect(labels).not.toContain("model-60");
+  expect(model?.props.options.map((option) => option.value)).toContain(
+    savedEnvelope,
+  );
+  await pane.unmount();
+});
+
+test("a stale saved select value stays visible instead of blanking the pane", async ($, on) => {
+  const env = setup(on);
+  env.settingsData.value = {
+    ...env.settingsData.value,
+    agents: env.settingsData.value.agents.map((agent) =>
+      agent.agentId === "demo"
+        ? {
+            ...agent,
+            requested: { ...agent.requested, model: "removed-model" },
+          }
+        : agent,
+    ),
+  };
+  await start($);
+  await $.command.run({ command: "workers", args: "settings" });
+  const pane = await mountInspector($);
+  const text = await paneAllText(pane);
+  expect(text).toContain("WORKER SETTINGS");
+  expect(text).toContain("demo · mock");
+  const model = await pane.find({
+    type: "Select",
+    key: "setting-demo-model",
+  });
+  const savedEnvelope = JSON.stringify({
+    action: "set",
+    value: "removed-model",
+  });
+  expect(model?.props.value).toBe(savedEnvelope);
+  expect(model?.props.options.length).toBeLessThanOrEqual(64);
+  const values = model?.props.options.map((option) => option.value) ?? [];
+  expect(values).toContain(savedEnvelope);
+  const pinned = model?.props.options.find(
+    (option) => option.value === savedEnvelope,
+  );
+  expect(pinned?.label).toContain('Saved value unavailable ("removed-model")');
+  expect(model?.props.options.indexOf(pinned)).toBe(1);
+  await pane.select({ key: "setting-demo-model", value: savedEnvelope });
+  await pane.select({
+    key: "setting-demo-model",
+    value: JSON.stringify({ action: "clear" }),
+  });
+  expect(env.configureCalls.at(-1)).toEqual({
+    agentId: "demo",
+    configId: "model",
+    clear: true,
+  });
+  await pane.unmount();
+});
+
+test("a type-incompatible saved boolean value renders an unavailable pin", async ($, on) => {
+  const env = setup(on);
+  env.settingsData.value = {
+    ...env.settingsData.value,
+    agents: env.settingsData.value.agents.map((agent) =>
+      agent.agentId === "demo"
+        ? {
+            ...agent,
+            requested: { ...agent.requested, telemetry: "true" },
+          }
+        : agent,
+    ),
+  };
+  await start($);
+  await $.command.run({ command: "workers", args: "settings" });
+  const pane = await mountInspector($);
+  const text = await paneAllText(pane);
+  expect(text).toContain("WORKER SETTINGS");
+  const telemetry = await pane.find({
+    type: "Select",
+    key: "setting-demo-telemetry",
+  });
+  const savedEnvelope = JSON.stringify({ action: "set", value: "true" });
+  expect(telemetry?.props.value).toBe(savedEnvelope);
+  expect(telemetry?.props.options.length).toBeLessThanOrEqual(64);
+  const labels = telemetry?.props.options.map((option) => option.label) ?? [];
+  expect(labels).toContain('Saved value unavailable ("true")');
+  expect(labels).toContain("Disabled");
+  expect(labels).toContain("Enabled");
+  expect(telemetry?.props.options.map((option) => option.value)).toContain(
+    savedEnvelope,
+  );
+  await pane.unmount();
 });

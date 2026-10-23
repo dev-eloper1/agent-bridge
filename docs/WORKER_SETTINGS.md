@@ -39,7 +39,7 @@ Each key/value is validated against the values the provider actually advertises;
 
 ## Models and provider settings
 
-The bridge normalizes legacy ACP models metadata and modern categorized configOptions for model discovery and applies the effective `sessionConfig` against provider-advertised [session configuration options](https://agentclientprotocol.com/protocol/v1/session-config-options) (select, grouped and boolean values). `/workers settings` is the interactive editor for those advertised options; changes apply without editing YAML or manually restarting the daemon, and unsupported settings stay unavailable rather than masquerading as applied.
+The bridge normalizes legacy ACP models metadata and modern categorized configOptions for model discovery and applies the effective `sessionConfig` against provider-advertised [session configuration options](https://agentclientprotocol.com/protocol/v1/session-config-options) (select, grouped and boolean values). `/workers settings` is the interactive editor for those advertised options; changes apply without editing YAML or manually restarting the daemon, and unsupported settings stay unavailable rather than masquerading as applied. Large provider option catalogs are paged within the pane — every advertised choice remains reachable page by page — while `plugin-settings` CLI discovery always returns the complete list.
 
 Shipped Copilot uses an explicit bridge-local auto model to avoid a previously rejected saved custom model. Other profiles generally use native defaults unless their command/config specifies otherwise. Pi's previously rejected default was fixed by the user in Pi; no global model override was retained by this project.
 
