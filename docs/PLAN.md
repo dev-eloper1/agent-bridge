@@ -131,6 +131,16 @@ Workspace identity checks are included in this release. Validation: 29 offline t
 - [x] Exercise native Back, Escape, autocomplete and Page Down in the live terminal.
 - [x] Install 0.5.2 and pass all 24 Mod-host tests against the installed package.
 
+## Harness-neutral worker settings
+
+- [x] Add private per-workspace preferences (0600, canonical-path/device/inode keyed) and a compiled `.agent-bridge/effective-agents.yaml` with managed defaults overlaid by saved choices.
+- [x] Add build/config daemon handshake: stale idle runtimes restart automatically; active tasks keep the previous runtime with `update_pending`; the MCP facade recompiles config before every call.
+- [x] Normalize provider-advertised ACP session options (select/grouped/boolean/legacy modes) and probe profiles without sending a prompt.
+- [x] Add `plugin-settings`/`plugin-configure`/`plugin-migrate-managed` human operations (CLI only, never MCP tools) with strict validation and fail-closed writes.
+- [x] Ship `/workers settings` in the Mod: provenance, readiness, profile cards, native selects, managed migration, explicit-env read-only and mobile CLI fallback.
+- [x] Safe legacy migration: matching generated configs import runtime/session preferences and stay managed; provider-different legacy configs are retained as base with warnings.
+- [x] Pass 122 runtime tests and 33 Mod-host tests; explicit `AGENT_BRIDGE_CONFIG` stays operator-managed read-only.
+
 ## Next milestone: specialized agents (after interface stabilization)
 
 - [x] Record product direction, initial primary-source research, package scope, use cases and acceptance gates in [SPECIALIZED_AGENTS.md](SPECIALIZED_AGENTS.md).

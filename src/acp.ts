@@ -12,6 +12,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
 import { executablePath, resolveExecutable } from "./executables.js";
+import {
+  normalizeSessionSettings,
+  validateSessionSetting,
+} from "./session-settings.js";
 export class Worker {
   child: ChildProcessWithoutNullStreams;
   connection: ClientConnection;
@@ -166,54 +170,35 @@ export class Worker {
     configOptions: any[];
     effective: Record<string, string | boolean>;
   }> {
-    let options: any[] = (response as any).configOptions ?? [];
+    let rawOptions: any[] = (response as any).configOptions ?? [];
     const modes = (response as any).modes;
     const effective: Record<string, string | boolean> = {};
-    const identifier = (o: any) => o?.id ?? o?.configId;
-    const choices = (o: any): string[] =>
-      (o?.options ?? []).flatMap((x: any) =>
-        Array.isArray(x?.options)
-          ? x.options.map((y: any) => String(y.value))
-          : x && "value" in x
-            ? [String(x.value)]
-            : [],
-      );
+    let options = normalizeSessionSettings({
+      configOptions: rawOptions,
+      modes,
+    });
     for (const [key, value] of Object.entries(configured)) {
-      const option = options.find((o) => identifier(o) === key);
-      if (!option) {
-        if (
-          key === "mode" &&
-          typeof value === "string" &&
-          modes?.availableModes?.some((m: any) => m.id === value)
-        ) {
-          await this.connection.agent.request("session/set_mode", {
-            sessionId,
-            modeId: value,
-          });
-          effective[key] = value;
-          continue;
-        }
+      const option = options.find((o) => o.id === key);
+      if (!option)
         throw Error(
           `Configured session option "${key}" is not advertised by the provider (available: ${
-            options.map(identifier).filter(Boolean).join(", ") || "none"
+            options.map((o) => o.id).join(", ") || "none"
           })`,
         );
+      try {
+        validateSessionSetting(options, key, value);
+      } catch (e) {
+        throw Error(
+          `Configured ${(e instanceof Error ? e.message : String(e)).replace(/^./, (c) => c.toLowerCase())}`,
+        );
       }
-      const configId = identifier(option);
-      const boolean = typeof option.currentValue === "boolean";
-      if (boolean) {
-        if (typeof value !== "boolean")
-          throw Error(
-            `Configured session option "${key}" expects a boolean value`,
-          );
-      } else {
-        const advertised = choices(option);
-        if (typeof value !== "string" || !advertised.includes(value))
-          throw Error(
-            `Configured session option "${key}" must be one of: ${
-              advertised.join(", ") || "none advertised"
-            }`,
-          );
+      if (option.source === "legacy_mode") {
+        await this.connection.agent.request("session/set_mode", {
+          sessionId,
+          modeId: value as string,
+        });
+        effective[key] = value;
+        continue;
       }
       if (option.currentValue === value) {
         effective[key] = value;
@@ -223,23 +208,29 @@ export class Worker {
         "session/set_config_option",
         {
           sessionId,
-          configId,
-          ...(boolean ? { value, type: "boolean" } : { value }),
+          configId: key,
+          ...(option.type === "boolean"
+            ? { value, type: "boolean" }
+            : { value }),
         },
       );
       if (!Array.isArray(result?.configOptions))
         throw Error(
           `Provider did not confirm session option "${key}"=${JSON.stringify(value)}: set response lacks configOptions`,
         );
-      options = result.configOptions;
-      const confirmed = options.find((o) => identifier(o) === configId);
+      rawOptions = result.configOptions;
+      options = normalizeSessionSettings({
+        configOptions: rawOptions,
+        modes,
+      });
+      const confirmed = options.find((o) => o.id === key);
       if (!confirmed || confirmed.currentValue !== value)
         throw Error(
           `Provider did not confirm session option "${key}"=${JSON.stringify(value)}`,
         );
       effective[key] = confirmed.currentValue;
     }
-    return { configOptions: options, effective };
+    return { configOptions: rawOptions, effective };
   }
   prompt(sessionId: string, text: string) {
     return this.connection.agent.request("session/prompt", {

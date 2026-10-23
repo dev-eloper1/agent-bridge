@@ -8,7 +8,7 @@ Agent Bridge is a Claude Code plugin for delegating to **Devin, Pi, Codex, Curso
 
 The plugin combines delegation skills, MCP tools and a Claude Mod interface. It starts a small local runtime automatically and reuses your installed CLIs and their existing authentication. It uses **Agent Client Protocol (ACP)** and pinned adapters rather than building another coding-agent framework.
 
-**Current checkpoint: 0.5.2 · Local prototype · 71 runtime tests + 26 Mod-host tests passing.** Live provider results and their limits are recorded in [validation](docs/VALIDATION.md) and the [provider matrix](docs/PROVIDERS.md).
+**Current checkpoint: 0.5.2 · Local prototype · 124 runtime tests + 33 Mod-host tests passing.** Live provider results and their limits are recorded in [validation](docs/VALIDATION.md) and the [provider matrix](docs/PROVIDERS.md).
 
 [Quick start](#quick-start) · [Usage](#delegate-in-your-own-words) · [Worker inspector](#watch-and-navigate) · [Architecture](#how-it-works) · [Limitations](#current-boundaries) · [Roadmap](#where-this-goes-next)
 
@@ -58,6 +58,8 @@ Use Devin to review this repo without changing files.
 
 No separate daemon terminal or manual MCP registration is needed. Agent Bridge finds the Git project root, or the starting folder outside Git, and creates private runtime state under `.agent-bridge/`. Add that directory to your project's `.gitignore`.
 
+Before your first delegated worker, open `/workers settings` to review each profile's provider-advertised options and choose values once — they are stored as private per-workspace preferences, not in your project files.
+
 To update an installed copy after pulling changes:
 
 ```sh
@@ -66,7 +68,7 @@ npm run build
 claude plugin update agent-bridge@agent-bridge-local --scope user
 ```
 
-Then reload plugins or restart Claude. Runtime-code updates also require restarting the project daemon **after active work finishes**; `/workers stop` interrupts active tasks. A UI-only update does not require stopping workers. [Full installation and update guide](docs/CLAUDE_PLUGIN.md).
+Then reload plugins or restart Claude. Updated defaults compile into the project's effective config automatically: a stale idle daemon restarts on its own, while active tasks keep the previous runtime until they finish — no manual restart is needed. `/workers stop` remains an explicit interrupt. A UI-only update does not require stopping workers. [Full installation and update guide](docs/CLAUDE_PLUGIN.md).
 
 ## Delegate in your own words
 
@@ -152,6 +154,7 @@ The pane has separate worker navigation and report-page controls. Switching work
 | Return typing to Claude           | Esc, leaving the pane open                                |
 | Close the pane                    | `/workers close` or Close; tasks continue                 |
 | Cancel the selected task          | `/workers cancel`                                         |
+| Profile settings                  | `/workers settings` or the Settings button                |
 
 Native arrows can navigate focused controls, so use Page Up/Page Down for dependable content scrolling. Hotkeys apply while the pane holds focus. The idle worker strip/status disappear; typing a draft hides active band controls so slash-command menus remain clear. Public output is what the provider exposes, not hidden model reasoning or a full interactive mirror of its native CLI.
 
@@ -183,7 +186,7 @@ The **skill** guides delegation. **MCP tools** dispatch and inspect tasks. The *
 | GitHub Copilot | Native ACP                             | `copilot-worker`  |
 | Claude         | Pinned ACP adapter                     | `claude-worker`   |
 
-These are **external workers exposed through plugin tools**, separate from Anthropic's native Agent runtime. There is no hidden Claude proxy subagent around each worker. Model selection, native extensions and other customization currently depend on harness startup configuration and trusted per-profile `agents.<id>.sessionConfig` (validated against provider-advertised ACP options); universal in-pane settings are not shipped. [Settings and recovery boundaries](docs/WORKER_SETTINGS.md).
+These are **external workers exposed through plugin tools**, separate from Anthropic's native Agent runtime. There is no hidden Claude proxy subagent around each worker. `/workers settings` edits the options each provider advertises over ACP (selects, grouped choices and booleans), saved as per-profile workspace preferences; model selection, native extensions and startup settings remain harness/profile configuration. [Settings and recovery boundaries](docs/WORKER_SETTINGS.md).
 
 ### Persistence and cancellation
 
@@ -205,7 +208,7 @@ npm run smoke:providers       # Live provider suite; uses your configured accoun
 npm run smoke:claude-plugin -- --codex-review
 ```
 
-At this checkpoint, **71 runtime tests and 26 Mod-host tests pass**. Live interface checks covered Back, Escape, slash-command navigation and Page Down scrolling. Previously recorded live runs passed conversation continuity/native recovery on all seven providers; six passed scoped code edits with independent checks, and Pi passed read-only review. Those are dated observations, not continuous compatibility guarantees. Paid provider runs were not repeated for the UI checkpoint.
+At this checkpoint, **124 runtime tests and 33 Mod-host tests pass**. Live interface checks covered Back, Escape, slash-command navigation and Page Down scrolling. Previously recorded live runs passed conversation continuity/native recovery on all seven providers; six passed scoped code edits with independent checks, and Pi passed read-only review. Those are dated observations, not continuous compatibility guarantees. Paid provider runs were not repeated for the UI checkpoint.
 
 Known boundaries:
 

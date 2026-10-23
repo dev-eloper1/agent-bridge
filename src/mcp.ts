@@ -4,7 +4,10 @@ import type { Config } from "./config.js";
 import { inputs } from "./runtime.js";
 import { remote } from "./server.js";
 import { runInput, runTask } from "./run.js";
-export async function mcp(config: Config, beforeCall?: () => Promise<void>) {
+export async function mcp(
+  config: Config,
+  beforeCall?: (method: string) => Promise<Config | void>,
+) {
   const server = new McpServer({ name: "agent-bridge", version: "0.5.2" });
   if (process.env.AGENT_BRIDGE_WORKER !== "1")
     server.registerTool(
@@ -16,10 +19,10 @@ export async function mcp(config: Config, beforeCall?: () => Promise<void>) {
       },
       async (args, extra) => {
         try {
-          await beforeCall?.();
+          const current = (await beforeCall?.("run")) ?? config;
           let progress = 0;
           const value = await runTask(
-            config,
+            current,
             args,
             extra.signal,
             async (message) => {
@@ -121,12 +124,12 @@ export async function mcp(config: Config, beforeCall?: () => Promise<void>) {
       },
       async (args: Record<string, unknown>) => {
         try {
-          await beforeCall?.();
+          const current = (await beforeCall?.(name)) ?? config;
           return {
             content: [
               {
                 type: "text" as const,
-                text: JSON.stringify(await remote(config, name, args)),
+                text: JSON.stringify(await remote(current, name, args)),
               },
             ],
           };

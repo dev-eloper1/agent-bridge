@@ -27,7 +27,7 @@ To update an installed copy after building:
 claude plugin update agent-bridge@agent-bridge-local --scope user
 ```
 
-Restart Claude Code or run `/reload-plugins`. Existing project daemons also need restarting to run updated runtime code: `/workers stop` interrupts their active tasks, so finish those tasks first. For development, start Claude with `--plugin-dir /Users/bhushan/Documents/Projects/agent-bridge` from your target folder.
+Restart Claude Code or run `/reload-plugins`. Updated plugin defaults compile into each project's effective config automatically: a stale idle daemon restarts itself on the next call, and active tasks keep their current runtime until they finish. `/workers stop` is only an explicit interrupt, not an update step. For development, start Claude with `--plugin-dir /Users/bhushan/Documents/Projects/agent-bridge` from your target folder.
 
 The plugin bundles skills, an MCP server and a Mod. Existing native CLI authentication is reused. It does not change global model settings or enable blanket provider approvals.
 
@@ -114,6 +114,7 @@ Normal supervision happens in the conversation. Use the direct worker buttons ab
 /workers next     # Next public-output page
 /workers prev     # Previous page
 /workers cancel   # Cancel the selected task
+/workers settings # Provider-advertised profile settings
 /workers close    # Close the pane without stopping work
 ```
 
@@ -133,13 +134,15 @@ Claude coordinates shared-folder edits to avoid conflicts. The plugin does not a
 
 ## Runtime lifecycle and troubleshooting
 
-The plugin finds the Git project root, or uses the starting folder outside Git. Config selection is explicit `AGENT_BRIDGE_CONFIG`, then project `agents.bridge.yaml`, then generated `.agent-bridge/plugin-agents.yaml`. Long socket paths use a private hashed location under `/tmp`; no localhost TCP port is exposed. Add `.agent-bridge/` to `.gitignore`.
+The plugin finds the Git project root, or uses the starting folder outside Git. Config selection is explicit `AGENT_BRIDGE_CONFIG` (a trusted operator override whose sessionConfig applies directly), then project `agents.bridge.yaml` as an advanced provider base — its `sessionConfig` entries appear in the settings screen as project requests and are stripped until you confirm them — then managed plugin defaults overlaid with your saved workspace preferences; the compiled result lives in `.agent-bridge/effective-agents.yaml`. Long socket paths use a private hashed location under `/tmp`; no localhost TCP port is exposed. Add `.agent-bridge/` to `.gitignore`.
+
+Profile settings are human choices, made once per project in `/workers settings` (or the Settings button in the overview). The screen probes each provider for its advertised session options without sending a prompt, shows availability, provenance and runtime readiness, and stores choices as private per-workspace preferences under `${XDG_CONFIG_HOME:-~/.config}/agent-bridge/workspaces/` — never in project files or provider environment. Projects with an advanced `agents.bridge.yaml` or a migrated legacy config can switch to managed defaults from the same screen; the source file is left untouched. An explicit `AGENT_BRIDGE_CONFIG` is operator-managed: settings are shown read-only and the referenced file must be edited directly. See [worker settings](WORKER_SETTINGS.md).
 
 `/workers stop` interrupts active work and stops the project runtime; next delegation starts it again. Runtime restarts preserve recorded history and fail interrupted jobs without replaying side effects. Native conversation load supports explicit follow-ups where the backend advertises it. External Claude workers cannot recursively activate this plugin.
 
 If tools/skills are missing, reload/restart and inspect `/plugin` or `/mcp`. Failed MCP startup can be cached; reconnect after fixing it. Runtime diagnostics are in `.agent-bridge/daemon.log`. `node dist/cli.js plugin-doctor` reports the resolved config file, workspace, socket and live runtime state without starting the daemon (`daemon.running: false` when unreachable); `plugin-restart` restarts it safely — it refuses while any nonterminal task exists and never cancels work. `agents_doctor` reports the same sanitized state through MCP. Fix authentication/model problems in the native CLI. Only worktree isolation needs Git HEAD.
 
-Claude's own auto/permission mode remains a Claude-side setting; the plugin does not read or edit your Claude settings. If auto-mode blocks trusted bridge calls, you may explicitly allow the exact tools you intend to use — `agents_run`, `agents_spawn`, `agents_cancel`, `agents_reply`, `agents_wait`, `agents_result`, `agents_status`, `agents_events`, `agents_artifact`, `agents_list`, `agents_templates` and `agents_doctor` — by writing those allow rules in your settings yourself; the plugin never edits them. `agents_run`, `agents_spawn`, `agents_reply`, `agents_steer` and `agents_define` are not read-only (they dispatch work, answer questions or save data), so pre-authorize them only deliberately; `agents_cancel` is risk-reducing but still interrupts work. Worker permission requests forwarded over ACP still require an explicit once-only `agents_reply` regardless of Claude's mode, and trusted session settings (for example a bypass mode) belong in `agents.<id>.sessionConfig` as a deliberate profile choice, validated against what the provider advertises.
+Claude's own auto/permission mode remains a Claude-side setting; the plugin does not read or edit your Claude settings. If auto-mode blocks trusted bridge calls, you may explicitly allow the exact tools you intend to use — `agents_run`, `agents_spawn`, `agents_cancel`, `agents_reply`, `agents_wait`, `agents_result`, `agents_status`, `agents_events`, `agents_artifact`, `agents_list`, `agents_templates` and `agents_doctor` — by writing those allow rules in your settings yourself; the plugin never edits them. `agents_run`, `agents_spawn`, `agents_reply`, `agents_steer` and `agents_define` are not read-only (they dispatch work, answer questions or save data), so pre-authorize them only deliberately; `agents_cancel` is risk-reducing but still interrupts work. Worker permission requests forwarded over ACP still require an explicit once-only `agents_reply` regardless of Claude's mode, and session settings (for example a bypass mode) belong in your workspace preferences through `/workers settings` as a deliberate per-profile choice, validated against what the provider advertises.
 
 The agents run externally through Agent Client Protocol; the plugin does not register them as native Anthropic Agent runtimes or add a hidden Claude proxy. A2A agent-service connections remain a [future feature](ROADMAP.md).
 

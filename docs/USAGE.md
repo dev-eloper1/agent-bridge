@@ -128,23 +128,23 @@ Example prompt to Claude:
 
 The relevant tools are usually displayed with the MCP server prefix, then these names:
 
-| Tool              | Purpose                                                                                                                          |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `agents_run`      | Ordinary foreground delegation; waits up to 45 seconds and returns a result/input request. Pass taskId alone to continue waiting; pass specialistRef or specialistSpec for a specialist |
-| `specialists_catalog`  | Discover persisted specialists by query/reference; needed only for specialized-worker requests                      |
-| `specialists_schema`   | Read the specialization authoring contract (fields, locations, capability boundaries)                               |
-| `specialists_validate` | Validate a specialization and preview worker binding without writing anything                                        |
-| `agents_list`     | Discover availability and negotiated capabilities/models                                                                         |
-| `agents_spawn`    | Persist a task and immediately return its taskId                                                                                 |
-| `agents_status`   | Compact state and pending question details                                                                                       |
-| `agents_wait`     | Wait up to eight seconds for selected tasks to finish or need input                                                              |
-| `agents_steer`    | Queue an instruction for the next ACP turn; at most two per task                                                                 |
-| `agents_reply`    | Answer a pending form question or explicitly select a once-only permission option                                                |
-| `agents_events`   | Read replayable events after your last cursor                                                                                    |
-| `agents_result`   | Bounded output tail, verification status and artifact references                                                                 |
-| `agents_artifact` | Fetch a bounded byte page of an artifact                                                                                         |
-| `agents_doctor`   | Read-only sanitized runtime diagnostics: config path, daemon, limits, provider commands/env names (never values), sessionConfig  |
-| `agents_cancel`   | Cancel and terminate that worker's process group                                                                                 |
+| Tool                   | Purpose                                                                                                                                                                                 |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agents_run`           | Ordinary foreground delegation; waits up to 45 seconds and returns a result/input request. Pass taskId alone to continue waiting; pass specialistRef or specialistSpec for a specialist |
+| `specialists_catalog`  | Discover persisted specialists by query/reference; needed only for specialized-worker requests                                                                                          |
+| `specialists_schema`   | Read the specialization authoring contract (fields, locations, capability boundaries)                                                                                                   |
+| `specialists_validate` | Validate a specialization and preview worker binding without writing anything                                                                                                           |
+| `agents_list`          | Discover availability and negotiated capabilities/models                                                                                                                                |
+| `agents_spawn`         | Persist a task and immediately return its taskId                                                                                                                                        |
+| `agents_status`        | Compact state and pending question details                                                                                                                                              |
+| `agents_wait`          | Wait up to eight seconds for selected tasks to finish or need input                                                                                                                     |
+| `agents_steer`         | Queue an instruction for the next ACP turn; at most two per task                                                                                                                        |
+| `agents_reply`         | Answer a pending form question or explicitly select a once-only permission option                                                                                                       |
+| `agents_events`        | Read replayable events after your last cursor                                                                                                                                           |
+| `agents_result`        | Bounded output tail, verification status and artifact references                                                                                                                        |
+| `agents_artifact`      | Fetch a bounded byte page of an artifact                                                                                                                                                |
+| `agents_doctor`        | Read-only sanitized runtime diagnostics: config path, daemon, limits, provider commands/env names (never values), sessionConfig                                                         |
+| `agents_cancel`        | Cancel and terminate that worker's process group                                                                                                                                        |
 
 Use the same agentId plus the original agentSessionId for explicit follow-ups. New tasks get fresh context. Omit taskKey for a new job, or give it a unique value; reuse the same taskKey only to retry the same dispatch. Workers share the project folder by default; coordinate overlapping edits. Explicit worktrees and alternate folders are separate; give a reviewer the actual directory or diff.
 
@@ -246,7 +246,19 @@ Inspect the actual changed files and run relevant checks in the reported `cwd`. 
 
 ### 8. Configure providers and limits
 
-With the plugin, config selection is: explicit `AGENT_BRIDGE_CONFIG`, then the project's `agents.bridge.yaml`, then auto-generated `.agent-bridge/plugin-agents.yaml`. The generated config sets `runtime.workspaceRoot` to your project and uses absolute adapter paths. It is created once and is not rewritten on every plugin start. Stop/restart the runtime after deliberately changing configuration; do not edit a running conversation's provider identity expecting it to migrate silently.
+With the plugin, config selection is: explicit `AGENT_BRIDGE_CONFIG` (a trusted operator-managed full base that ignores workspace preferences), then the project's `agents.bridge.yaml` as an advanced full base, then managed plugin defaults overlaid with saved workspace preferences. The compiled result is written to `.agent-bridge/effective-agents.yaml` only when bytes change, and a stale idle daemon restarts automatically to apply it. Do not edit a running conversation's provider identity expecting it to migrate silently.
+
+`/workers settings` in the Mod — or the equivalent CLI commands — is the normal way to choose profile settings; preferences live privately under `${XDG_CONFIG_HOME:-~/.config}/agent-bridge/workspaces/`:
+
+```sh
+node dist/cli.js plugin-settings                       # probe and list all profiles
+node dist/cli.js plugin-settings '{"agentId":"demo"}'  # one profile only
+node dist/cli.js plugin-configure '{"agentId":"demo","configId":"mode","value":"bypass"}'
+node dist/cli.js plugin-configure '{"agentId":"demo","configId":"mode","clear":true}'
+node dist/cli.js plugin-migrate-managed                # advanced/legacy base → managed defaults
+```
+
+`plugin-configure` re-probes the profile and accepts only exact advertised option/value pairs; `clear` removes one saved key without requiring the provider. Under an explicit `AGENT_BRIDGE_CONFIG` the write commands refuse — edit that file directly. `plugin-migrate-managed` preserves saved preferences and leaves the project/legacy source file untouched. Values a repository requests through `agents.bridge.yaml` `sessionConfig` are recorded as requests, not user approval; only saved preferences apply as your choice. `plugin-restart` remains an explicit troubleshooting operation that refuses while any nonterminal task exists.
 
 Edit the project YAML's trusted provider entries. `command` and `args` are spawned without a shell. `envNames` explicitly inherits selected environment values; `env` sets literal values. `envPaths` resolves named configured executable/path values relative to the config or `~/`. `requires` checks adapter dependencies. Do not put secrets in a committed YAML.
 

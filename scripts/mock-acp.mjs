@@ -199,6 +199,15 @@ app.onNotification("session/cancel", ({ params: { sessionId } }) => {
 app.onRequest(
   "session/prompt",
   async ({ params: { sessionId, prompt }, client: ctx }) => {
+    if (file)
+      writeFileSync(
+        `${file}-prompt-count`,
+        String(
+          (existsSync(`${file}-prompt-count`)
+            ? Number(readFileSync(`${file}-prompt-count`, "utf8"))
+            : 0) + 1,
+        ),
+      );
     const text = prompt
       .filter((x) => x.type === "text")
       .map((x) => x.text)

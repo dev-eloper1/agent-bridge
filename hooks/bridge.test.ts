@@ -38,7 +38,20 @@ function setup(on) {
   const composer = { text: "", cursor: 0 };
   const gates = new Map();
   const requests = [];
-  mock.store(on);
+  const storeWrites = [];
+  mock.store((name, ...rest) =>
+    on(
+      name,
+      ...rest.map((arg) =>
+        typeof arg === "function"
+          ? async (...callArgs) => {
+              if (name === "store.set") storeWrites.push(callArgs[1]?.value);
+              return arg(...callArgs);
+            }
+          : arg,
+      ),
+    ),
+  );
   mock.env(on, {});
   const clock = mock.clock(on);
   on("session.id", () => ({ value: "test-session" }));
@@ -72,13 +85,125 @@ function setup(on) {
     focused.push(e);
     return { value: undefined };
   });
-  on("process.run", () => ({
+  const settingsData = {
+    value: {
+      workspace: "/tmp/plugin-fixture",
+      preferencesFile:
+        "/tmp/home/agent-bridge/workspaces/aaaaaaaaaaaaaaaa.yaml",
+      sources: { bundled: "/plugin/agents.yaml" },
+      migrationWarnings: [],
+      projectRequestedSessionConfig: { demo: { mode: "bypass" } },
+      readiness: { status: "ready", restarted: false },
+      agents: [
+        {
+          agentId: "demo",
+          provider: "mock",
+          description: "Offline demo worker",
+          available: true,
+          readOnlyEnforced: true,
+          requested: { mode: "bypass" },
+          options: [
+            {
+              id: "mode",
+              name: "Mode",
+              description: "Execution mode",
+              category: "safety",
+              type: "select",
+              currentValue: "ask",
+              source: "config_option",
+              choices: [
+                { value: "ask", name: "Ask", description: "Ask first" },
+                { value: "bypass", name: "Bypass" },
+              ],
+            },
+            {
+              id: "telemetry",
+              name: "Telemetry",
+              type: "boolean",
+              currentValue: false,
+              source: "config_option",
+            },
+          ],
+        },
+        {
+          agentId: "gone",
+          provider: "ghost",
+          description: "Unavailable profile",
+          available: false,
+          readOnlyEnforced: false,
+          requested: {},
+          options: [],
+          error: "Provider executable unavailable: ghost",
+        },
+        {
+          agentId: "empty",
+          provider: "mock",
+          description: "No advertised options",
+          available: true,
+          readOnlyEnforced: false,
+          requested: {},
+          options: [],
+        },
+      ],
+    },
+  };
+  const configureCalls = [],
+    migrateCalls = [],
+    processCommands = [];
+  const configureResult = {
     value: {
       exitCode: 0,
-      stdout: JSON.stringify({ socket: "/tmp/test-bridge.sock" }),
+      stdout: JSON.stringify({
+        saved: true,
+        readiness: { status: "ready", restarted: false },
+        preferencesFile: "/tmp/prefs.yaml",
+        agentId: "demo",
+        sessionConfig: {},
+      }),
       stderr: "",
     },
-  }));
+  };
+  on("process.run", (_, e) => {
+    const argv = e.argv ?? [];
+    const command = argv.find(
+      (arg) => typeof arg === "string" && arg.startsWith("plugin-"),
+    );
+    processCommands.push(command);
+    if (command === "plugin-settings")
+      return {
+        value: {
+          exitCode: 0,
+          stdout: JSON.stringify(settingsData.value),
+          stderr: "",
+        },
+      };
+    if (command === "plugin-configure") {
+      if (argv.at(-1) !== command) configureCalls.push(JSON.parse(argv.at(-1)));
+      return { value: configureResult.value };
+    }
+    if (command === "plugin-migrate-managed") {
+      migrateCalls.push({});
+      return {
+        value: {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            saved: true,
+            readiness: { status: "ready", restarted: false },
+            preferencesFile: "/tmp/prefs.yaml",
+            useManagedDefaults: true,
+          }),
+          stderr: "",
+        },
+      };
+    }
+    return {
+      value: {
+        exitCode: 0,
+        stdout: JSON.stringify({ socket: "/tmp/test-bridge.sock" }),
+        stderr: "",
+      },
+    };
+  });
   on("http.fetch", async (_, e) => {
     const request = JSON.parse(e.body ?? e.init?.body);
     requests.push(request);
@@ -168,6 +293,12 @@ function setup(on) {
     composer,
     gates,
     requests,
+    settingsData,
+    storeWrites,
+    configureCalls,
+    migrateCalls,
+    processCommands,
+    configureResult,
   };
 }
 async function start($) {
@@ -1280,4 +1411,284 @@ test("a blocked notification followed by a later completion submits only the ter
   await env.clock.advance(2100);
   await env.clock.settle();
   expect(env.submitted.length).toBe(2);
+});
+
+async function paneAllText(pane) {
+  return (
+    (await pane.findAll({ type: "Text" })).map((e) => e.text).join("\n") +
+    "\n" +
+    ((await pane.find({ type: "Markdown" }))?.props.text ?? "")
+  );
+}
+
+test("/workers settings opens the pane with profiles, provenance, readiness and controls", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  const result = await $.command.run({
+    command: "workers",
+    args: "settings",
+  });
+  expect(result.text).toBe("Worker settings opened.");
+  expect(env.processCommands).toContain("plugin-settings");
+  const pane = await mountInspector($);
+  const text = await paneAllText(pane);
+  expect(text).toContain("WORKER SETTINGS");
+  expect(text).toContain("Managed plugin defaults");
+  expect(text).toContain(
+    "Preferences · /tmp/home/agent-bridge/workspaces/aaaaaaaaaaaaaaaa.yaml",
+  );
+  expect(text).toContain("Runtime ready");
+  expect(text).toContain("demo · mock");
+  expect(text).toContain("Offline demo worker");
+  expect(text).toContain("Provider-enforced read-only");
+  expect(text).toContain('Saved: mode="bypass"');
+  expect(text).toContain('Project requests (not applied): mode="bypass"');
+  expect(text).toContain(
+    "Unavailable · Provider executable unavailable: ghost",
+  );
+  expect(text).toContain("no editable settings");
+  expect(
+    await pane.find({ type: "Select", key: "setting-demo-mode" }),
+  ).toBeDefined();
+  expect(
+    await pane.find({ type: "Select", key: "setting-demo-telemetry" }),
+  ).toBeDefined();
+  expect(
+    await pane.find({ type: "Button", key: "workers-migrate-managed" }),
+  ).toBeUndefined();
+  expect(
+    await pane.find({ type: "Button", key: "workers-back" }),
+  ).toBeDefined();
+  expect(
+    await pane.find({ type: "Button", key: "workers-close" }),
+  ).toBeDefined();
+  await pane.unmount();
+  await $.command.run({ command: "workers", args: "back" });
+  expect(await paneText($)).toContain("Select a worker");
+});
+
+test("setting selects send typed set/clear payloads, refresh and notice", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  await $.command.run({ command: "workers", args: "settings" });
+  const pane = await mountInspector($);
+  const mode = await pane.find({ type: "Select", key: "setting-demo-mode" });
+  expect(mode?.props.value).toBe(
+    JSON.stringify({ action: "set", value: "bypass" }),
+  );
+  expect(mode?.props.options[0]).toEqual({
+    value: JSON.stringify({ action: "clear" }),
+    label: "Provider default (ask)",
+  });
+  expect(mode?.props.options.map((option) => option.label)).toContain(
+    "Ask · Ask first",
+  );
+  const telemetry = await pane.find({
+    type: "Select",
+    key: "setting-demo-telemetry",
+  });
+  expect(telemetry?.props.options.map((option) => option.label)).toEqual([
+    "Provider default (false)",
+    "Disabled",
+    "Enabled",
+  ]);
+  await pane.select({
+    key: "setting-demo-mode",
+    value: JSON.stringify({ action: "set", value: "ask" }),
+  });
+  expect(env.configureCalls.at(-1)).toEqual({
+    agentId: "demo",
+    configId: "mode",
+    value: "ask",
+  });
+  await pane.select({
+    key: "setting-demo-telemetry",
+    value: JSON.stringify({ action: "set", value: true }),
+  });
+  expect(env.configureCalls.at(-1)).toEqual({
+    agentId: "demo",
+    configId: "telemetry",
+    value: true,
+  });
+  await pane.select({
+    key: "setting-demo-mode",
+    value: JSON.stringify({ action: "clear" }),
+  });
+  expect(env.configureCalls.at(-1)).toEqual({
+    agentId: "demo",
+    configId: "mode",
+    clear: true,
+  });
+  expect(
+    env.processCommands.filter((command) => command === "plugin-settings")
+      .length,
+  ).toBeGreaterThan(3);
+  await pane.unmount();
+  expect(await paneAllText(await mountInspector($))).toContain(
+    "Setting saved.",
+  );
+});
+
+test("configure failure is bounded and prior cards remain", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  env.configureResult.value = {
+    exitCode: 1,
+    stdout: "",
+    stderr: "CONFIGURE_FAILED_" + "x".repeat(400) + "_TAIL",
+  };
+  await $.command.run({ command: "workers", args: "settings" });
+  const pane = await mountInspector($);
+  await pane.select({
+    key: "setting-demo-mode",
+    value: JSON.stringify({ action: "set", value: "ask" }),
+  });
+  await pane.unmount();
+  const after = await mountInspector($);
+  const text = await paneAllText(after);
+  expect(text).toContain("CONFIGURE_FAILED_");
+  expect(text).not.toContain("_TAIL");
+  expect(text).toContain("demo · mock");
+  expect(
+    await after.find({
+      type: "Select",
+      key: "setting-demo-mode",
+    }),
+  ).toBeDefined();
+  await after.unmount();
+  env.configureResult.value = {
+    exitCode: 0,
+    stdout: JSON.stringify({
+      saved: true,
+      readiness: { status: "ready", restarted: false },
+      preferencesFile: "/tmp/prefs.yaml",
+      agentId: "demo",
+      sessionConfig: {},
+    }),
+    stderr: "",
+  };
+  const retry = await mountInspector($);
+  await retry.select({
+    key: "setting-demo-mode",
+    value: JSON.stringify({ action: "set", value: "ask" }),
+  });
+  await retry.unmount();
+  const recovered = await mountInspector($);
+  const recoveredText = await paneAllText(recovered);
+  expect(recoveredText).not.toContain("CONFIGURE_FAILED_");
+  expect(recoveredText).toContain("Setting saved.");
+  await recovered.unmount();
+});
+
+test("advanced source offers managed migration and explicit env suppresses controls", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  env.settingsData.value = {
+    ...env.settingsData.value,
+    sources: { project: "/tmp/plugin-fixture/agents.bridge.yaml" },
+    migrationWarnings: ["Legacy provider definition differs"],
+  };
+  await $.command.run({ command: "workers", args: "settings" });
+  let pane = await mountInspector($);
+  let text = await paneAllText(pane);
+  expect(text).toContain(
+    "Advanced project config · /tmp/plugin-fixture/agents.bridge.yaml",
+  );
+  expect(text).toContain("Legacy provider definition differs");
+  const migrate = await pane.find({
+    type: "Button",
+    key: "workers-migrate-managed",
+  });
+  expect(migrate).toBeDefined();
+  const settingsCalls = env.processCommands.filter(
+    (command) => command === "plugin-settings",
+  ).length;
+  await pane.press({ key: "workers-migrate-managed" });
+  expect(env.migrateCalls.length).toBe(1);
+  expect(
+    env.processCommands.filter((command) => command === "plugin-settings")
+      .length,
+  ).toBeGreaterThan(settingsCalls);
+  await pane.unmount();
+  const migrated = await mountInspector($);
+  expect(await paneAllText(migrated)).toContain(
+    "Managed plugin defaults applied.",
+  );
+  await migrated.unmount();
+  env.settingsData.value = {
+    ...env.settingsData.value,
+    sources: { explicitEnvironment: "/tmp/trusted.yaml" },
+    migrationWarnings: [],
+  };
+  await $.command.run({ command: "workers", args: "settings" });
+  pane = await mountInspector($);
+  text = await paneAllText(pane);
+  expect(text).toContain("Explicit operator config · /tmp/trusted.yaml");
+  expect(text).toContain("managed by its operator");
+  expect(await pane.find({ type: "Select" })).toBeUndefined();
+  expect(
+    await pane.find({ type: "Button", key: "workers-migrate-managed" }),
+  ).toBeUndefined();
+  await pane.unmount();
+});
+
+test("update_pending and readiness error render in the settings screen", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  env.settingsData.value = {
+    ...env.settingsData.value,
+    readiness: {
+      status: "update_pending",
+      activeTaskIds: ["task_1", "task_2"],
+    },
+  };
+  await $.command.run({ command: "workers", args: "settings" });
+  const pending = await mountInspector($);
+  expect(await paneAllText(pending)).toContain(
+    "Update pending · 2 active tasks keep the previous runtime",
+  );
+  await pending.unmount();
+  env.settingsData.value = {
+    ...env.settingsData.value,
+    readiness: { status: "error", error: "daemon failed to start" },
+  };
+  await $.command.run({ command: "workers", args: "settings" });
+  const broken = await mountInspector($);
+  expect(await paneAllText(broken)).toContain(
+    "Runtime unavailable · daemon failed to start",
+  );
+  await broken.unmount();
+});
+
+test("mobile settings fall back to exact CLI commands with provider-owned values", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  await $.command.run({ command: "workers", args: "settings" });
+  const pane = await mountInspector($, 38, "mobile");
+  const text = await paneAllText(pane);
+  expect(await pane.find({ type: "Select" })).toBeUndefined();
+  expect(text).toContain("provider-owned");
+  expect(text).toContain("node dist/cli.js plugin-settings");
+  expect(text).toContain("plugin-configure");
+  expect(text).toContain("demo · mock");
+  await pane.unmount();
+});
+
+test("the settings screen is never persisted nor restored after a new session", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  await $.command.run({ command: "workers", args: "settings" });
+  expect(await paneText($)).toContain("WORKER SETTINGS");
+  await env.clock.advance(2100);
+  await env.clock.settle();
+  expect(env.storeWrites.length).toBeGreaterThan(0);
+  expect(
+    env.storeWrites.every(
+      (value) => (value?.screen ?? "overview") !== "settings",
+    ),
+  ).toBe(true);
+  await start($);
+  const text = await paneText($);
+  expect(text).not.toContain("WORKER SETTINGS");
+  expect(text).toContain("Select a worker");
 });
