@@ -56,7 +56,11 @@ function setup(on) {
   const clock = mock.clock(on);
   on("session.id", () => ({ value: "test-session" }));
   on("session.start", () => ({ cwd: "/tmp/plugin-fixture" }));
-  on("command.register", (_, e) => ({ value: { command: e.name } }));
+  const registered = [];
+  on("command.register", (_, e) => {
+    registered.push(e);
+    return { value: { command: e.name } };
+  });
   on("ui.status", (_, e) => {
     statuses.push(e);
     return { value: undefined };
@@ -306,6 +310,7 @@ function setup(on) {
     requests,
     settingsData,
     storeWrites,
+    registered,
     configureCalls,
     migrateCalls,
     processCommands,
@@ -1891,4 +1896,31 @@ test("a type-incompatible saved boolean value renders an unavailable pin", async
     savedEnvelope,
   );
   await pane.unmount();
+});
+
+test("/workers registers an argument hint and /workers help needs no runtime", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  const workers = env.registered.find((entry) => entry.name === "workers");
+  expect(workers?.description).toBe(
+    "Workers: overview, settings, history, output and cancellation",
+  );
+  expect(workers?.description).toContain("settings");
+  expect(workers?.description).toContain("history");
+  expect(workers?.description).toContain("cancellation");
+  expect(workers?.argumentHint).toBe(
+    "[settings|history|watch|pause|cancel|close|stop|worker]",
+  );
+  const calls = env.requests.length;
+  const commands = env.processCommands.length;
+  const opens = env.opened.length;
+  const result = await $.command.run({ command: "workers", args: "help" });
+  expect(result.text).toContain("/workers settings");
+  expect(result.text).toContain("/workers <name> or <name>/<task>");
+  expect(result.text).toContain("/workers dashboard");
+  expect(result.text).toContain("interrupts active work");
+  expect(result.text).toContain("/workers history");
+  expect(env.requests.length).toBe(calls);
+  expect(env.processCommands.length).toBe(commands);
+  expect(env.opened.length).toBe(opens);
 });

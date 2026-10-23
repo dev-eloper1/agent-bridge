@@ -542,6 +542,21 @@ async function handleWorkersCommand($, e) {
       await $.ui.close({ id: "external-workers" });
       return { text: "Worker pane closed. Tasks continue." };
     }
+    if (argument === "help")
+      return {
+        text:
+          "/workers — overview\n" +
+          "/workers settings — provider-advertised profile settings\n" +
+          "/workers <name> or <name>/<task> — open a worker or task\n" +
+          "/workers history — task history\n" +
+          "/workers watch / pause — follow or pause live output\n" +
+          "/workers next / prev — page output\n" +
+          "/workers attention — jump to a worker needing input\n" +
+          "/workers cancel — cancel the selected task\n" +
+          "/workers dashboard — dashboard URL\n" +
+          "/workers close — close the pane\n" +
+          "/workers stop — interrupts active work and stops the runtime",
+      };
     if (argument === "dashboard") {
       const dashboard = await call($, "dashboard", {});
       return { text: "Agent Bridge dashboard: " + dashboard.url };
@@ -702,7 +717,7 @@ async function handleWorkersCommand($, e) {
           : undefined;
       if (!id)
         return {
-          text: "Use /workers, /workers <name>, /workers <name>/1, or /workers history|settings|watch|pause|next|prev|cancel|close|stop.",
+          text: "Use /workers help — actions: settings, <name>, <name>/1, history, watch, pause, next, prev, attention, cancel, dashboard, close, stop.",
         };
       tasks[id] = await call($, "status", { taskId: id });
       selectTask(id);
@@ -783,7 +798,8 @@ export function register(on) {
     await $.command.register({
       name: "workers",
       description:
-        "Browse worker activity, output, history, settings and cancellation",
+        "Workers: overview, settings, history, output and cancellation",
+      argumentHint: "[settings|history|watch|pause|cancel|close|stop|worker]",
     });
     try {
       const boot = await $.process.run(

@@ -106,6 +106,7 @@ Normal supervision happens in the conversation. Use the direct worker buttons ab
 
 ```text
 /workers          # Named conversation overview
+/workers help     # List every action (Claude shows an argument hint, not dynamic subcommand completion)
 /workers codex-review-repository # Inspect this conversation
 /workers history  # Browse earlier tasks in it
 /workers codex-review-repository/1 # Read its first report
