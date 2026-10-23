@@ -1,5 +1,6 @@
 import { readFileSync, realpathSync, mkdirSync, lstatSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import path from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -51,9 +52,18 @@ export const schema = z
         })
         .strict(),
     ),
+    specialistCatalogs: z
+      .record(id, z.object({ path: z.string().min(1) }).strict())
+      .default({}),
   })
   .strict()
   .superRefine((c, ctx) => {
+    for (const name of Object.keys(c.specialistCatalogs))
+      if (name === "project" || name === "global" || name === "inline")
+        ctx.addIssue({
+          code: "custom",
+          message: `${name} is a reserved specialist catalog name`,
+        });
     for (const [name, a] of Object.entries(c.agents)) {
       const p = c.providers[a.provider];
       if (!p)
@@ -76,6 +86,19 @@ export type Config = z.infer<typeof schema> & {
 export function loadConfig(file = "agents.yaml"): Config {
   const base = realpathSync(path.dirname(path.resolve(file)));
   const c = schema.parse(parse(readFileSync(file, "utf8")));
+  const specialistCatalogs = Object.fromEntries(
+    Object.entries(c.specialistCatalogs).map(([catalog, entry]) => [
+      catalog,
+      {
+        path: path.resolve(
+          base,
+          entry.path.startsWith("~/")
+            ? path.join(homedir(), entry.path.slice(2))
+            : entry.path,
+        ),
+      },
+    ]),
+  );
   const root = realpathSync(path.resolve(base, c.runtime.workspaceRoot ?? "."));
   const stateDir = path.resolve(root, c.runtime.stateDir);
   let socket = path.join(stateDir, "runtime.sock");
@@ -98,5 +121,5 @@ export function loadConfig(file = "agents.yaml"): Config {
         ".sock",
     );
   }
-  return { ...c, root, stateDir, socket };
+  return { ...c, specialistCatalogs, root, stateDir, socket };
 }

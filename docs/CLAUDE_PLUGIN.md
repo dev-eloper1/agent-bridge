@@ -50,6 +50,19 @@ Direct skill invocation also works:
 /agent-bridge:delegate copilot implement the retry fix and its regression test
 ```
 
+### Specialized workers
+
+Projects and clients can publish declarative specializations the bridge discovers from `.specialists` catalogs — plain folders under version control. You can also ask Claude to create, adapt, save, update or remove specialists directly; it does that with its normal file and Git tools under your approvals, never through bridge write APIs. Ask naturally — no references or setup commands are involved:
+
+```text
+Have Devin use Hivemind's triage investigator on this case.
+What specialized workers does this project have?
+For this task, have Devin act as a strict API-contract reviewer.
+Create a specialized worker that audits Terraform, and save it for this project.
+```
+
+Claude checks the catalog only for named-specialist requests and selects one clear match; it asks when genuinely ambiguous and says so when nothing matches. Ordinary provider requests never touch the catalog. A specialization is data — display name, version, description, instructions, delivery mode, compatibility restrictions and acceptance criteria — while the worker profile still supplies the provider, model, tools, permissions and workspace. The bridge rejects an incompatible binding before starting anything and never silently falls back to plain delegation on a specialist failure. A request "for this task" runs an inline specialization ephemerally with nothing saved; persisted specialists live at `<project>/.specialists/<namespace>/<id>/specialist.yaml`, `~/.specialists/` personally, and any catalogs added under `specialistCatalogs:` in `agents.yaml` (relative paths resolve against that file). Each conversation pins the resolved specialization, so editing or deleting it later does not change an existing conversation; a fresh conversation resolves the current version. Specialist references and task IDs stay internal unless you ask for them.
+
 Each unrelated new task starts with fresh context. "Ask Devin to explain finding #2" resumes the conversation for that review when Claude retains its reference. Different tasks do not automatically share conversation history just because they use the same CLI/folder. If the intended prior task is ambiguous, Claude should clarify rather than resume an arbitrary conversation. Native load support determines whether a stopped worker can restore its context; failures are explicit.
 
 ## Foreground and background

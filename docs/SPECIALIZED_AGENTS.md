@@ -1,17 +1,15 @@
 # Specialized agents: research and next milestone
 
-Research checkpoint: 2026-10-19. Status: initial research and proposed design, **not implemented**. Priority: after the worker interface and usability are stable. This document describes the user's next product direction; it does not change current worker behavior or configuration syntax.
+Research checkpoint: 2026-10-19. Status: first slice shipped. Declarative specializations are implemented — client-owned specialists at `.specialists/<namespace>/<id>/specialist.yaml`, `~/.specialists/` and configured `specialistCatalogs:` roots, discovered through `specialists_catalog` and delegated with `specialistRef` or an inline `specialistSpec`; specializations today carry identity, description, instructions, delivery mode, provider/read-only compatibility restrictions and acceptance criteria, conversations pin the resolved snapshot, and the `specialize` skill covers natural-language create/adapt/save/update/delete/promote through the client's own file and Git tools. Everything below remains the proposed next milestones: evaluations, native tool/MCP bindings, model/memory settings and remote/hosted catalogs are **not implemented**.
 
 ## Product intent
 
 Create reusable specialists from Claude Code through Agent Bridge, save them for a project or globally, and invoke them as named workers. A companion authoring tool could edit and evaluate the same packages later. Keep one runtime, one definition resolver and the existing task/session/UI machinery.
 
-Example future interactions, not current commands:
+Current interactions: naming a persisted specialist naturally ("Use Hivemind's triage investigator on this case") discovers and runs it through `specialists_catalog`/`specialistRef`, a "for this task" specialist runs an inline `specialistSpec`, and follow-ups keep the pinned snapshot. Example future interactions, not current commands:
 
 - “Create a security reviewer that reports only reproducible findings, cannot edit files, and saves this definition for this project.”
 - “Use my migration specialist on this change, running through Devin.”
-- “Continue the same specialist conversation.”
-- “Start a fresh instance of the same specialist using Pi.”
 - “Compare this agent revision with its previous version on our eval cases.”
 - “Explain what instructions, tools, model and memory this worker actually received.”
 
@@ -47,7 +45,7 @@ These are upstream-documentation findings unless marked local. Online documentat
 | [ACP configuration options](https://agentclientprotocol.com/protocol/v1/session-config-options)               | Agents may advertise session selectors, including model/reasoning/mode settings.                                                                                                              | Discover and validate values instead of assuming a common model/settings API. This does not establish a portable arbitrary system-prompt API.                                                                                                   |
 | [Anthropic agent-evaluation guidance](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) | Evaluations can check outcomes and traces, use multiple grader types and repeated trials, and track regressions.                                                                              | Grade actual artifacts and actions; do not accept “tests passed” solely because the worker says so. Reuse existing test runners before adopting an evaluation service/framework.                                                                |
 
-Local bridge gaps: `src/config.ts` currently defines provider startup configuration and simple agent profiles, not agent packages. `src/acp.ts` supplies empty MCP lists for new/load requests. Full editable session configuration, template resolution, custom prompt installation, tool injection, package memory and evaluation tooling are not implemented. The shipped Pi wrapper deliberately disables extensions/MCP and limits tools; customization must not quietly remove its read-only guarantee.
+Local bridge state: `src/specialists.ts` resolves declarative specializations from project/global/configured `.specialists` catalogs and `src/templates.ts` retains the legacy project/global saved definitions; instructions, delivery mode, provider/read-only restrictions and acceptance criteria reach the worker today. `src/acp.ts` still supplies empty MCP lists for new/load requests. Full editable session configuration, custom prompt installation beyond the shipped delivery modes, tool injection, package memory and evaluation tooling are not implemented. The shipped Pi wrapper deliberately disables extensions/MCP and limits tools; customization must not quietly remove its read-only guarantee.
 
 The remaining harnesses—Devin, Cursor, Codex and Copilot—need a dedicated native-configuration and adapter-forwarding matrix. Prior delegation/recovery smoke tests do not prove specialization support. Do not fill these cells from assumptions about ordinary CLI flags.
 
@@ -77,14 +75,21 @@ Custom tools should primarily reference existing MCP servers or pinned native ex
 
 ### Storage and resolution
 
-Proposed locations, subject to a small filesystem/resolution spike:
+Shipped locations for specializations:
 
 ```text
-.agent-bridge/agents/<agent-id>/       Project agent definitions
-~/.agent-bridge/agents/<agent-id>/    Personal/global definitions
+.specialists/<namespace>/<id>/specialist.yaml             Project catalog
+~/.specialists/<namespace>/<id>/specialist.yaml           Personal catalog
+<configured root>/<namespace>/<id>/specialist.yaml        Named catalogs from agents.yaml `specialistCatalogs:`
 
-Each bundle may contain:
-  agent.yaml                         Typed metadata, bindings, references
+.agent-bridge/agents/<agent-id>/       Legacy project saved definitions (compatibility only)
+~/.agent-bridge/agents/<agent-id>/     Legacy personal saved definitions (compatibility only)
+```
+
+Specialist directories and the declared `namespace`/`id` must match. Unqualified `namespace/id` references resolve only when exactly one catalog contains the specialist; `catalog:namespace/id` addresses one catalog. One-off specializations also run inline as a `specialistSpec` with nothing persisted. Future bundle contents beyond `specialist.yaml` remain proposed, not shipped:
+
+```text
+Each bundle may later contain:
   instructions.md                    Human-readable behavior
   skills/                            Optional reusable procedures
   references/                        Optional domain material
@@ -92,11 +97,11 @@ Each bundle may contain:
   evals/                             Cases, fixtures and grader configuration
 ```
 
-Keep generated configuration, transcripts, artifacts and eval results outside the definition bundle. The current `.agent-bridge/` directory also holds runtime state and is commonly ignored: explicitly document/selectively unignore shareable definitions, or support a tracked definitions directory elsewhere. Never encourage committing the whole state folder. Global storage refers to definitions, not a single cross-project conversation or shared permissions.
+Keep generated configuration, transcripts, artifacts and eval results outside the definition bundle. The current `.agent-bridge/` directory also holds runtime state and is commonly ignored; the project catalog lives in `.specialists/` so shareable specialists are tracked. Never encourage committing the whole state folder. Global storage refers to definitions, not a single cross-project conversation or shared permissions.
 
-Prefer explicit project/global identifiers when ambiguous; unqualified lookup can use project > global > bundled defaults, with the source path shown. No recursive inheritance initially. If overrides are added, present the resolved definition and do not merge permission lists in a way that broadens access unexpectedly. Templates must not override stronger project, user or harness rules.
+Templates must not override stronger project, user or harness rules; specializations likewise request restrictions and never grant capabilities.
 
-Persist template ID, version, content hash, resolved dependencies, harness/adapter versions and effective settings on the conversation. Editing a template applies to new conversations. Existing conversations keep the pinned definition; upgrade requires an explicit new compatible instance or verified migration. Native persistent context is not automatically portable between harnesses. An intentional handoff transfers a bounded, attributed summary/artifacts, not a claim that the original session moved.
+The shipped pinning persists the specialist's namespace/id, version, content digest, catalog and resolved snapshot on the conversation. Editing a specialist applies to new conversations. Existing conversations keep the pinned specialist; upgrade requires a fresh conversation. Native persistent context is not automatically portable between harnesses. An intentional handoff transfers a bounded, attributed summary/artifacts, not a claim that the original session moved.
 
 ### Authoring experience
 

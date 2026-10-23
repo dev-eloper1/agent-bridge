@@ -35,6 +35,16 @@ import {
   templateMetadata,
   validateTemplateBinding,
 } from "./templates.js";
+import {
+  specialistRef,
+  specialistSpecDefinition,
+  catalogRoots,
+  resolveSpecialist,
+  inlineSpecialist,
+  listSpecialists,
+  specialistMetadata,
+  validateSpecialistBinding,
+} from "./specialists.js";
 import { startDashboard } from "./dashboard.js";
 const taskId = z.string().regex(/^task_[a-f0-9-]{36}$/);
 const message = z.string().min(1).max(16000);
@@ -57,10 +67,26 @@ export const inputs = {
       agentId: z.string().max(64).optional(),
     })
     .strict(),
+  specialists_schema: z.object({}).strict(),
+  specialists_validate: z
+    .object({
+      specialistSpec: specialistSpecDefinition,
+      agentId: z.string().max(64).optional(),
+    })
+    .strict(),
+  specialists_catalog: z
+    .object({
+      query: z.string().trim().min(1).max(200).optional(),
+      reference: specialistRef.optional(),
+      agentId: z.string().max(64).optional(),
+    })
+    .strict(),
   spawn: z
     .object({
       agentId: z.string().max(64),
       prompt: message,
+      specialistRef: specialistRef.optional(),
+      specialistSpec: specialistSpecDefinition.optional(),
       template: templateRef.optional(),
       taskKey: z.string().min(1).max(100).optional(),
       acceptanceCriteria: z.array(z.string().max(500)).max(20).default([]),
@@ -299,6 +325,113 @@ export class Runtime {
             : undefined,
         };
       }
+      case "specialists_schema":
+        return {
+          specialistSpec: {
+            description:
+              "Declarative data describing a specialization; it can restrict but never grant capabilities",
+            required: {
+              format: "literal 1",
+              namespace:
+                "lowercase letters, digits and hyphens; must match the <namespace>/<id> directory for persisted specialists",
+              id: "lowercase letters, digits and hyphens; must match the directory name for persisted specialists",
+              name: "display name, up to 80 characters",
+              version: "semantic version such as 1.0.0",
+              description: "up to 400 characters; used for catalog matching",
+              instructions:
+                "the specialist's behavior text, up to 12000 characters",
+              delivery: "one of: task-instructions, system-append",
+            },
+            optional: {
+              providers:
+                "allowlist of provider names this specialist supports; incompatible bindings fail before launch",
+              requiresReadOnly:
+                "true requires a worker profile with provider-enforced read-only tools; instructions alone never satisfy this",
+              acceptanceCriteria:
+                "up to 20 output-contract checks merged before task criteria",
+            },
+            prohibited:
+              "no commands, environment variables, credentials, executable tools, hooks, MCP servers, permission approvals, model or reasoning settings; those belong to worker profiles",
+          },
+          locations: {
+            project: "<project>/.specialists/<namespace>/<id>/specialist.yaml",
+            global: "~/.specialists/<namespace>/<id>/specialist.yaml",
+            configured:
+              "specialistCatalogs: { <name>: { path: <.specialists root> } } in agents.yaml; catalog.yaml is optional metadata only",
+            inline:
+              "a specialistSpec passed directly to specialists_validate or agents_run/agents_spawn for one-off use; nothing is written",
+            reservedNames: ["project", "global", "inline"],
+          },
+          availableCatalogs: Object.fromEntries(
+            Object.entries(catalogRoots(this.config)).slice(0, 50),
+          ),
+          execution:
+            "agents_run and agents_spawn accept exactly one of template (legacy saved definition), specialistRef (persisted specialist) or specialistSpec (inline); conversations pin the resolved specialist digest",
+        };
+      case "specialists_validate": {
+        if (a.agentId && !this.config.agents[a.agentId])
+          throw Error("Unknown agent");
+        const snapshot = inlineSpecialist(a.specialistSpec);
+        const result: any = specialistMetadata(snapshot);
+        if (a.agentId) {
+          try {
+            result.binding = validateSpecialistBinding(
+              snapshot,
+              this.config,
+              a.agentId,
+            );
+          } catch (error) {
+            result.bindingError =
+              error instanceof Error ? error.message : String(error);
+          }
+        }
+        return result;
+      }
+      case "specialists_catalog": {
+        if (a.agentId && !this.config.agents[a.agentId])
+          throw Error("Unknown agent");
+        const binding = (snapshot: any) => {
+          if (!a.agentId) return undefined;
+          try {
+            return {
+              binding: validateSpecialistBinding(
+                snapshot,
+                this.config,
+                a.agentId,
+              ),
+            };
+          } catch (error) {
+            return {
+              bindingError:
+                error instanceof Error ? error.message : String(error),
+            };
+          }
+        };
+        if (a.reference) {
+          const snapshot = resolveSpecialist(this.config, a.reference);
+          return { ...snapshot, ...binding(snapshot) };
+        }
+        let entries = listSpecialists(this.config) as any[];
+        if (a.query) {
+          const query = a.query.toLowerCase();
+          entries = entries.filter(
+            (entry) =>
+              !entry.error &&
+              [
+                entry.reference,
+                entry.namespace,
+                entry.id,
+                entry.name,
+                entry.description,
+              ].some((value) => String(value).toLowerCase().includes(query)),
+          );
+        }
+        if (a.agentId)
+          entries = entries.map((entry) =>
+            entry.error ? entry : { ...entry, ...binding(entry) },
+          );
+        return entries;
+      }
       case "list":
         return Object.entries(this.config.agents).map(([agentId, agent]) => {
           const sessions = Object.values(this.store.state.sessions).filter(
@@ -351,6 +484,9 @@ export class Runtime {
               agentSessionId: s.agentSessionId,
               workerName: s.workerName,
               template: s.template ? templateMetadata(s.template) : undefined,
+              specialist: s.specialistSnapshot
+                ? specialistMetadata(s.specialistSnapshot)
+                : undefined,
               workspace: s.workspace ?? this.defaultWorkspace(agentId),
               cwd: s.cwd,
               lastTask: Object.values(this.store.state.tasks)
@@ -381,6 +517,13 @@ export class Runtime {
       case "spawn": {
         const agent = this.config.agents[a.agentId];
         if (!agent) throw Error("Unknown agent");
+        if (
+          [a.specialistRef, a.specialistSpec, a.template].filter(Boolean)
+            .length > 1
+        )
+          throw Error(
+            "Use exactly one of specialistRef (persisted specialist), specialistSpec (inline) or template (legacy saved definition)",
+          );
         if (a.taskKey) {
           const previous = Object.values(this.store.state.tasks).find(
             (t) => t.agentId === a.agentId && t.taskKey === a.taskKey,
@@ -437,13 +580,42 @@ export class Runtime {
           throw Error(
             "Definition differs from the pinned conversation; omit template to continue it or start a fresh conversation",
           );
+        if (
+          s &&
+          a.specialistRef &&
+          (!s.specialistSnapshot ||
+            resolveSpecialist(this.config, a.specialistRef).digest !==
+              s.specialistSnapshot.digest)
+        )
+          throw Error(
+            "Specialist differs from the pinned conversation; omit specialistRef to continue it or start a fresh conversation",
+          );
+        if (
+          s &&
+          a.specialistSpec &&
+          (!s.specialistSnapshot ||
+            inlineSpecialist(a.specialistSpec).digest !==
+              s.specialistSnapshot.digest)
+        )
+          throw Error(
+            "Specialist differs from the pinned conversation; omit specialistSpec to continue it or start a fresh conversation",
+          );
         const definition =
           s?.template ??
           (a.template
             ? resolveTemplate(templateRoots(this.config.root), a.template)
             : undefined);
+        const specialist =
+          s?.specialistSnapshot ??
+          (a.specialistRef
+            ? resolveSpecialist(this.config, a.specialistRef)
+            : a.specialistSpec
+              ? inlineSpecialist(a.specialistSpec)
+              : undefined);
         if (definition)
           validateTemplateBinding(definition, this.config, a.agentId);
+        if (specialist)
+          validateSpecialistBinding(specialist, this.config, a.agentId);
         if (!s) {
           const identity =
             selected.mode === "project" || selected.mode === "directory"
@@ -465,6 +637,7 @@ export class Runtime {
             ),
             fingerprint,
             template: definition,
+            specialistSnapshot: specialist,
             workspace: selected,
             workspaceIdentity: identity,
             cwd: identity?.canonicalPath,
@@ -486,7 +659,9 @@ export class Runtime {
           ).slice(0, 120),
           execution: a.execution,
           acceptanceCriteria: [
-            ...(definition?.acceptanceCriteria ?? []),
+            ...(definition?.acceptanceCriteria ??
+              specialist?.acceptanceCriteria ??
+              []),
             ...a.acceptanceCriteria,
           ],
           provider: agent.provider,
@@ -498,6 +673,18 @@ export class Runtime {
                 digest: definition.digest,
                 scope: definition.scope,
                 delivery: definition.delivery,
+              }
+            : undefined,
+          specialist: specialist
+            ? {
+                reference: specialist.reference,
+                namespace: specialist.namespace,
+                id: specialist.id,
+                name: specialist.name,
+                version: specialist.version,
+                digest: specialist.digest,
+                catalog: specialist.catalog,
+                delivery: specialist.delivery,
               }
             : undefined,
           verification: "pending",
@@ -856,8 +1043,8 @@ export class Runtime {
       const response = await w.session(
         cwd,
         s.nativeSessionId,
-        s.template?.delivery === "system-append"
-          ? s.template.instructions
+        (s.template ?? s.specialistSnapshot)?.delivery === "system-append"
+          ? (s.template ?? s.specialistSnapshot)!.instructions
           : undefined,
       );
       if (!s.nativeSessionId) {
@@ -881,8 +1068,14 @@ export class Runtime {
       s.models as { currentModelId?: string } | undefined
     )?.currentModelId;
     let prompt = this.store.readArtifactText(t.taskId, "prompt.txt");
-    if (s.template?.delivery === "task-instructions")
-      prompt = `Saved agent instructions (${s.template.id}@${s.template.version}; user-task context, not a system prompt):\n${s.template.instructions}\n\nCurrent assignment:\n${prompt}`;
+    const pinned = s.template ?? s.specialistSnapshot;
+    const pinnedId = s.template
+      ? s.template.id
+      : s.specialistSnapshot
+        ? `${s.specialistSnapshot.namespace}/${s.specialistSnapshot.id}`
+        : undefined;
+    if (pinned?.delivery === "task-instructions")
+      prompt = `Saved agent instructions (${pinnedId}@${pinned.version}; user-task context, not a system prompt):\n${pinned.instructions}\n\nCurrent assignment:\n${prompt}`;
     if (t.acceptanceCriteria.length)
       prompt +=
         "\nAcceptance criteria (coordinator verifies independently):\n" +

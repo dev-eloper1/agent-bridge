@@ -40,6 +40,7 @@ export function projectConfig(source: Config) {
     runtime: { ...source.runtime, stateDir: ".agent-bridge" },
     providers,
     agents: source.agents,
+    specialistCatalogs: source.specialistCatalogs,
   };
 }
 export function initializeProject(source: Config, workspace: string) {

@@ -78,6 +78,7 @@ Then reload plugins or restart Claude. Runtime-code updates also require restart
 | Follow-up                   | “Ask Devin to explain its second finding.”                             | Claude resumes that review's persistent worker conversation when the reference is clear.                       |
 | Fresh perspective           | “Start a fresh Pi session and review the changes independently.”       | A new conversation starts; the previous review stays available.                                                |
 | Multiple workers            | “Have Devin check the code and Pi check the docs in the background.”   | Both tasks appear in the inspector, subject to concurrency limits.                                             |
+| Specialized agent           | “Have Devin use Hivemind's triage investigator on this case.”          | Claude discovers the published spec, selects the specialist and delegates in the same turn.                    |
 
 Direct skill invocation is also available:
 
@@ -88,6 +89,19 @@ Direct skill invocation is also available:
 ```
 
 **Ordinary delegation returns results, not just a launch receipt.** A foreground tool waits in bounded intervals, continuing with the same task handle for longer work. Background execution is an explicit choice. Task and native-session IDs remain available for diagnostics, but you normally do not manage them yourself.
+
+### Specialized workers
+
+You can use a specialist a project publishes, or ask Claude to make one for you — no commands, references or setup are needed in normal use:
+
+```text
+Have Devin use Hivemind's triage investigator on this case.
+What specialized workers does this project have?
+For this task, have Devin act as a strict API-contract reviewer.
+Create a specialized Pi worker that audits our Terraform files.
+```
+
+Claude searches the catalog only for named-specialist requests; ordinary delegation skips it. A one-off request runs an inline specialization ephemerally — nothing is saved unless you ask — while "save it for this project", "for me everywhere" or a team name persists it under `.specialists/<namespace>/<id>/specialist.yaml` in the project, `~/.specialists/` personally, or configured team catalogs added under `specialistCatalogs:` in `agents.yaml`. A specialization supplies a name, description, instructions and acceptance criteria — the configured worker still supplies the provider, model, tools and permissions — and can restrict compatible providers or require provider-enforced read-only tools. Each conversation pins the resolved specialization, so follow-ups are unaffected by later edits; a fresh conversation uses the current content. Specializations are data: they cannot install tools, hooks, credentials or MCP servers. Saved definitions (`agents_templates`, `template`) continue to work unchanged as legacy compatibility.
 
 ### A worker conversation is more than one task
 
@@ -208,7 +222,7 @@ See the [checkpoint findings](docs/CHECKPOINT_0.5.2.md), [capability matrix](doc
 
 First, finish interface usability: clear navigation, predictable focus, retained history, actionable errors and unobtrusive activity.
 
-Then add **specialized agent packages**: reusable project/global definitions with instructions, native tool/MCP bindings, model settings, memory policies, output contracts and evals. Templates, conversations and tasks remain distinct. The first proposed slice proves one reviewer package on two compatible harnesses, with measured outcomes and explicit unsupported capabilities. [Research brief](docs/SPECIALIZED_AGENTS.md).
+Then extend **specialized workers**: the shipped specialist model covers declarative instructions, compatibility restrictions and acceptance criteria, ephemeral inline specializations and Claude-led authoring through the `specialize` skill; native tool/MCP bindings, model settings, memory policies, output contracts and evals remain future work. The next slice proves one reviewer specialist on two compatible harnesses, with measured outcomes and explicit unsupported capabilities. [Research brief](docs/SPECIALIZED_AGENTS.md).
 
 Optional **A2A agent-service providers** are a separate future direction. Agent Client Protocol is the ACP used here; IBM/BeeAI's different Agent Communication Protocol merged into A2A. That merger does not require replacing the CLI transport. [Roadmap](docs/ROADMAP.md).
 

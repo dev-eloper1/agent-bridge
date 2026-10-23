@@ -130,7 +130,10 @@ The relevant tools are usually displayed with the MCP server prefix, then these 
 
 | Tool              | Purpose                                                                                                                          |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `agents_run`      | Ordinary foreground delegation; waits up to 45 seconds and returns a result/input request. Pass taskId alone to continue waiting |
+| `agents_run`      | Ordinary foreground delegation; waits up to 45 seconds and returns a result/input request. Pass taskId alone to continue waiting; pass specialistRef or specialistSpec for a specialist |
+| `specialists_catalog`  | Discover persisted specialists by query/reference; needed only for specialized-worker requests                      |
+| `specialists_schema`   | Read the specialization authoring contract (fields, locations, capability boundaries)                               |
+| `specialists_validate` | Validate a specialization and preview worker binding without writing anything                                        |
 | `agents_list`     | Discover availability and negotiated capabilities/models                                                                         |
 | `agents_spawn`    | Persist a task and immediately return its taskId                                                                                 |
 | `agents_status`   | Compact state and pending question details                                                                                       |
