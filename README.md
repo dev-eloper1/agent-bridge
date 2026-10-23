@@ -8,7 +8,7 @@ Agent Bridge is a Claude Code plugin for delegating to **Devin, Pi, Codex, Curso
 
 The plugin combines delegation skills, MCP tools and a Claude Mod interface. It starts a small local runtime automatically and reuses your installed CLIs and their existing authentication. It uses **Agent Client Protocol (ACP)** and pinned adapters rather than building another coding-agent framework.
 
-**Current checkpoint: 0.5.2 · Local prototype · 35 runtime tests + 24 Mod-host tests passing.** Live provider results and their limits are recorded in [validation](docs/VALIDATION.md) and the [provider matrix](docs/PROVIDERS.md).
+**Current checkpoint: 0.5.2 · Local prototype · 71 runtime tests + 26 Mod-host tests passing.** Live provider results and their limits are recorded in [validation](docs/VALIDATION.md) and the [provider matrix](docs/PROVIDERS.md).
 
 [Quick start](#quick-start) · [Usage](#delegate-in-your-own-words) · [Worker inspector](#watch-and-navigate) · [Architecture](#how-it-works) · [Limitations](#current-boundaries) · [Roadmap](#where-this-goes-next)
 
@@ -183,7 +183,7 @@ The **skill** guides delegation. **MCP tools** dispatch and inspect tasks. The *
 | GitHub Copilot | Native ACP                             | `copilot-worker`  |
 | Claude         | Pinned ACP adapter                     | `claude-worker`   |
 
-These are **external workers exposed through plugin tools**, separate from Anthropic's native Agent runtime. There is no hidden Claude proxy subagent around each worker. Model selection, native extensions and other customization currently depend on harness startup configuration; universal in-pane settings are not shipped. [Settings and recovery boundaries](docs/WORKER_SETTINGS.md).
+These are **external workers exposed through plugin tools**, separate from Anthropic's native Agent runtime. There is no hidden Claude proxy subagent around each worker. Model selection, native extensions and other customization currently depend on harness startup configuration and trusted per-profile `agents.<id>.sessionConfig` (validated against provider-advertised ACP options); universal in-pane settings are not shipped. [Settings and recovery boundaries](docs/WORKER_SETTINGS.md).
 
 ### Persistence and cancellation
 
@@ -205,7 +205,7 @@ npm run smoke:providers       # Live provider suite; uses your configured accoun
 npm run smoke:claude-plugin -- --codex-review
 ```
 
-At this checkpoint, **35 runtime tests and 24 Mod-host tests pass**. Live interface checks covered Back, Escape, slash-command navigation and Page Down scrolling. Previously recorded live runs passed conversation continuity/native recovery on all seven providers; six passed scoped code edits with independent checks, and Pi passed read-only review. Those are dated observations, not continuous compatibility guarantees. Paid provider runs were not repeated for the UI checkpoint.
+At this checkpoint, **71 runtime tests and 26 Mod-host tests pass**. Live interface checks covered Back, Escape, slash-command navigation and Page Down scrolling. Previously recorded live runs passed conversation continuity/native recovery on all seven providers; six passed scoped code edits with independent checks, and Pi passed read-only review. Those are dated observations, not continuous compatibility guarantees. Paid provider runs were not repeated for the UI checkpoint.
 
 Known boundaries:
 

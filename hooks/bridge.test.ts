@@ -1208,3 +1208,76 @@ test("a delayed poll cannot replace the newly selected worker report", async ($,
   expect(await paneText($)).toContain("OTHER_WORKER_REPORT");
   expect(await paneText($)).not.toContain("PUBLIC_START");
 });
+
+test("a terminal event coalesces a queued blocked event in one refresh into a single update", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  await $.tool.call({
+    tool: "mcp__plugin_agent-bridge_workers__agents_spawn",
+    input: {},
+  });
+  env.task.status = "cancelled";
+  env.events.push(
+    {
+      eventId: "evt_blocked",
+      cursor: 1,
+      taskId: "task_123",
+      agentId: "devin-worker",
+      type: "task.blocked",
+      summary: "STALE_BLOCKED_UPDATE",
+    },
+    {
+      eventId: "evt_cancelled",
+      cursor: 2,
+      taskId: "task_123",
+      agentId: "devin-worker",
+      type: "task.cancelled",
+      summary: "Cancelled",
+    },
+  );
+  await env.clock.advance(2100);
+  await env.clock.settle();
+  expect(env.submitted.length).toBe(1);
+  expect(env.submitted[0]).toContain("task.cancelled");
+  expect(env.submitted[0]).not.toContain("task.blocked");
+  expect(env.submitted[0]).not.toContain("STALE_BLOCKED_UPDATE");
+});
+
+test("a blocked notification followed by a later completion submits only the terminal update", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  await $.tool.call({
+    tool: "mcp__plugin_agent-bridge_workers__agents_spawn",
+    input: {},
+  });
+  env.task.status = "blocked_on_input";
+  env.events.push({
+    eventId: "evt_blocked",
+    cursor: 1,
+    taskId: "task_123",
+    agentId: "devin-worker",
+    type: "task.blocked",
+    summary: "Needs permission",
+  });
+  await env.clock.advance(2100);
+  await env.clock.settle();
+  expect(env.submitted.length).toBe(1);
+  expect(env.submitted[0]).toContain("task.blocked");
+  env.task.status = "completed";
+  env.events.push({
+    eventId: "evt_completed",
+    cursor: 2,
+    taskId: "task_123",
+    agentId: "devin-worker",
+    type: "task.completed",
+    summary: "Done",
+  });
+  await env.clock.advance(2100);
+  await env.clock.settle();
+  expect(env.submitted.length).toBe(2);
+  expect(env.submitted[1]).toContain("task.completed");
+  expect(env.submitted[1]).not.toContain("task.blocked");
+  await env.clock.advance(2100);
+  await env.clock.settle();
+  expect(env.submitted.length).toBe(2);
+});

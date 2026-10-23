@@ -9,24 +9,108 @@ if (process.env.MOCK_PID_FILE)
 const sessions = {};
 const directories = {};
 const systems = {};
+const configs = {};
+const legacyModes = process.argv.includes("--legacy-modes");
+const ignoreConfigUpdate = process.argv.includes("--ignore-config-update");
+let clientBooleanConfig = false;
 const sessionFile = (id) => `${file}-${id}.json`;
+const configFile = (id) => `${sessionFile(id)}.config`;
 const save = (sessionId) => {
   if (file)
     writeFileSync(sessionFile(sessionId), JSON.stringify(sessions[sessionId]));
+  if (file && configs[sessionId])
+    writeFileSync(configFile(sessionId), JSON.stringify(configs[sessionId]));
+};
+const defaults = () => ({
+  applied: [],
+  modeId: "ask",
+  options: [
+    {
+      id: "mode",
+      name: "Mode",
+      type: "select",
+      currentValue: "ask",
+      options: [
+        { value: "ask", name: "Ask" },
+        { value: "bypass", name: "Bypass" },
+      ],
+    },
+    {
+      id: "review",
+      name: "Review",
+      type: "select",
+      currentValue: "off",
+      options: [
+        {
+          group: "g1",
+          name: "Levels",
+          options: [
+            { value: "off", name: "Off" },
+            { value: "strict", name: "Strict" },
+          ],
+        },
+      ],
+    },
+    ...(clientBooleanConfig
+      ? [
+          {
+            id: "telemetry",
+            name: "Telemetry",
+            type: "boolean",
+            currentValue: false,
+          },
+        ]
+      : []),
+  ],
+});
+const configFor = (sessionId) => {
+  if (!configs[sessionId]) {
+    configs[sessionId] =
+      file && existsSync(configFile(sessionId))
+        ? JSON.parse(readFileSync(configFile(sessionId), "utf8"))
+        : defaults();
+    if (!clientBooleanConfig)
+      configs[sessionId].options = configs[sessionId].options.filter(
+        (o) => o.type !== "boolean",
+      );
+  }
+  return configs[sessionId];
+};
+const modeOf = (sessionId) =>
+  configFor(sessionId).options.find((o) => o.id === "mode")?.currentValue ??
+  configFor(sessionId).modeId;
+const configState = (sessionId) => {
+  const c = configFor(sessionId);
+  return legacyModes
+    ? {
+        modes: {
+          currentModeId: c.modeId,
+          availableModes: [
+            { id: "ask", name: "Ask" },
+            { id: "bypass", name: "Bypass" },
+          ],
+        },
+      }
+    : { configOptions: c.options };
 };
 const cancelled = new Set();
 const app = agent({ name: "bridge-mock", version: "1" });
-app.onRequest("initialize", () => ({
-  protocolVersion: 1,
-  agentCapabilities: {
-    loadSession: !process.argv.includes("--no-load"),
-    ...(process.argv.includes("--system-prompt")
-      ? { sessionCapabilities: { systemPrompt: {} } }
-      : {}),
-  },
-  authMethods: [],
-  agentInfo: { name: "mock", version: "1" },
-}));
+app.onRequest("initialize", ({ params }) => {
+  clientBooleanConfig = Boolean(
+    params?.clientCapabilities?.session?.configOptions?.boolean,
+  );
+  return {
+    protocolVersion: 1,
+    agentCapabilities: {
+      loadSession: !process.argv.includes("--no-load"),
+      ...(process.argv.includes("--system-prompt")
+        ? { sessionCapabilities: { systemPrompt: {} } }
+        : {}),
+    },
+    authMethods: [],
+    agentInfo: { name: "mock", version: "1" },
+  };
+});
 app.onRequest("session/new", ({ params: { cwd, systemPrompt } }) => {
   const sessionId = randomUUID();
   sessions[sessionId] = [];
@@ -40,6 +124,7 @@ app.onRequest("session/new", ({ params: { cwd, systemPrompt } }) => {
   save(sessionId);
   return {
     sessionId,
+    ...configState(sessionId),
     models: {
       currentModelId: "deterministic",
       availableModels: [
@@ -73,9 +158,41 @@ app.onRequest(
         },
       },
     });
-    return {};
+    return { ...configState(sessionId) };
   },
 );
+app.onRequest("session/set_config_option", ({ params }) => {
+  const { sessionId, configId, value } = params;
+  const c = configFor(sessionId);
+  const option = c.options.find((o) => o.id === configId);
+  if (!option) throw Error(`Unknown config option: ${configId}`);
+  const advertised = (option.options ?? []).flatMap((x) =>
+    Array.isArray(x.options) ? x.options.map((y) => y.value) : [x.value],
+  );
+  if (option.type === "boolean") {
+    if (typeof value !== "boolean")
+      throw Error(`Config option ${configId} expects a boolean`);
+  } else if (!advertised.includes(value))
+    throw Error(`Config option ${configId} rejects value: ${value}`);
+  if (!ignoreConfigUpdate) {
+    option.currentValue = value;
+    c.applied.push({ configId, value });
+    save(sessionId);
+  }
+  return { configOptions: c.options };
+});
+app.onRequest("session/set_mode", ({ params }) => {
+  const { sessionId, modeId } = params;
+  const c = configFor(sessionId);
+  if (!["ask", "bypass"].includes(modeId))
+    throw Error(`Unknown mode: ${modeId}`);
+  c.modeId = modeId;
+  c.applied.push({ modeId });
+  const mode = c.options.find((o) => o.id === "mode");
+  if (mode) mode.currentValue = modeId;
+  save(sessionId);
+  return {};
+});
 app.onNotification("session/cancel", ({ params: { sessionId } }) => {
   cancelled.add(sessionId);
 });
@@ -153,7 +270,7 @@ app.onRequest(
           required: ["message"],
         },
       });
-    if (text.includes("PERMISSION"))
+    if (text.includes("PERMISSION") && modeOf(sessionId) !== "bypass")
       reply = await ctx.request("session/request_permission", {
         sessionId,
         toolCall: {
@@ -161,9 +278,20 @@ app.onRequest(
           title: "Write a file",
           kind: "edit",
           status: "pending",
+          rawInput: {
+            command: "write",
+            path: process.cwd() + "/out.txt",
+            secret: process.env.MOCK_TOOL_SECRET,
+            padding: "P".repeat(3200),
+          },
         },
         options: [
           { optionId: "once", name: "Allow once", kind: "allow_once" },
+          {
+            optionId: "session",
+            name: "Allow session",
+            kind: "allow_always",
+          },
           { optionId: "deny", name: "Reject", kind: "reject_once" },
         ],
       });

@@ -49,6 +49,13 @@ export const schema = z
           workspace: z
             .enum(["read-only", "project", "isolated-worktree"])
             .default("project"),
+          sessionConfig: z
+            .record(
+              z.string().min(1).max(100),
+              z.union([z.string().min(1).max(200), z.boolean()]),
+            )
+            .refine((o) => Object.keys(o).length <= 20)
+            .default({}),
         })
         .strict(),
     ),
@@ -82,9 +89,11 @@ export type Config = z.infer<typeof schema> & {
   root: string;
   stateDir: string;
   socket: string;
+  sourceFile: string;
 };
 export function loadConfig(file = "agents.yaml"): Config {
-  const base = realpathSync(path.dirname(path.resolve(file)));
+  const sourceFile = realpathSync(path.resolve(file));
+  const base = path.dirname(sourceFile);
   const c = schema.parse(parse(readFileSync(file, "utf8")));
   const specialistCatalogs = Object.fromEntries(
     Object.entries(c.specialistCatalogs).map(([catalog, entry]) => [
@@ -121,5 +130,5 @@ export function loadConfig(file = "agents.yaml"): Config {
         ".sock",
     );
   }
-  return { ...c, specialistCatalogs, root, stateDir, socket };
+  return { ...c, specialistCatalogs, root, stateDir, socket, sourceFile };
 }

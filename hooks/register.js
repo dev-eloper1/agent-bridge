@@ -350,6 +350,22 @@ async function refresh($, notify) {
       afterCursor: state.cursor,
       limit: 50,
     });
+    const relevant = [
+      "task.question",
+      "task.blocked",
+      "task.completed",
+      "task.failed",
+      "task.cancelled",
+      "task.timed_out",
+    ];
+    const isTerminalEvent = (type) =>
+      [
+        "task.completed",
+        "task.failed",
+        "task.cancelled",
+        "task.timed_out",
+      ].includes(type);
+    const incoming = new Map();
     for (const event of inbox.events) {
       if (
         !state.owned.includes(event.taskId) ||
@@ -358,17 +374,14 @@ async function refresh($, notify) {
       )
         continue;
       if (
-        [
-          "task.question",
-          "task.blocked",
-          "task.completed",
-          "task.failed",
-          "task.cancelled",
-          "task.timed_out",
-        ].includes(event.type) &&
+        relevant.includes(event.type) &&
         !state.pending.some((e) => e.eventId === event.eventId)
       )
-        state.pending.push(event);
+        incoming.set(event.taskId, event);
+    }
+    for (const event of incoming.values()) {
+      state.pending = state.pending.filter((e) => e.taskId !== event.taskId);
+      state.pending.push(event);
     }
     state.cursor = inbox.nextCursor;
     const activeIds = roster
@@ -390,6 +403,9 @@ async function refresh($, notify) {
         /* Keep other history accessible if one stored task is unavailable. */
       }
     }
+    state.pending = state.pending.filter(
+      (e) => isTerminalEvent(e.type) || !terminal(tasks[e.taskId]?.status),
+    );
     rememberWorkers();
     for (const pending of Object.values(inFlight)) {
       const task = tasks[pending.taskId];

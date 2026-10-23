@@ -108,6 +108,7 @@ export function remote(
         socketPath: config.socket,
         path: "/call",
         method: "POST",
+        agent: false,
         headers: { "Content-Type": "application/json" },
         timeout: 10000,
       },

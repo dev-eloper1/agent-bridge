@@ -19,10 +19,7 @@ import { randomUUID } from "node:crypto";
 import type { Workspace, WorkspaceIdentity } from "./workspaces.js";
 import { z } from "zod";
 import { templateSnapshot, type TemplateSnapshot } from "./templates.js";
-import {
-  specialistSnapshot,
-  type SpecialistSnapshot,
-} from "./specialists.js";
+import { specialistSnapshot, type SpecialistSnapshot } from "./specialists.js";
 export const uid = (prefix: string) => `${prefix}_${randomUUID()}`;
 export const now = () => new Date().toISOString();
 export type Status =
@@ -35,6 +32,10 @@ export type Status =
   | "timed_out";
 export const terminal = (s: Status) =>
   ["completed", "failed", "cancelled", "timed_out"].includes(s);
+export interface SessionConfigState {
+  requested: Record<string, string | boolean>;
+  effective: Record<string, string | boolean>;
+}
 export interface Session {
   agentSessionId: string;
   workerName?: string;
@@ -49,6 +50,7 @@ export interface Session {
   fingerprint: string;
   template?: TemplateSnapshot;
   specialistSnapshot?: SpecialistSnapshot;
+  sessionConfig?: SessionConfigState;
 }
 export interface Task {
   taskId: string;
@@ -94,7 +96,14 @@ export interface Task {
     kind: "input" | "permission";
     summary: string;
     options?: { optionId: string; kind: string; name: string }[];
+    toolCall?: {
+      toolCallId?: string;
+      title?: string;
+      kind?: string;
+      input?: string;
+    };
   };
+  sessionConfig?: SessionConfigState;
   followups: string[];
   steeringCount: number;
   stopReason?: string;
