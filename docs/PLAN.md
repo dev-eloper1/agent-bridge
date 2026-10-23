@@ -134,8 +134,9 @@ Workspace identity checks are included in this release. Validation: 29 offline t
 ## Next milestone: specialized agents (after interface stabilization)
 
 - [x] Record product direction, initial primary-source research, package scope, use cases and acceptance gates in [SPECIALIZED_AGENTS.md](SPECIALIZED_AGENTS.md).
+- [x] Ship declarative specializations: `.specialists/` project/personal/configured catalogs, strict namespaced resolution, `specialists_catalog` discovery, `specialistRef`/inline `specialistSpec` delegation with compatibility checks, `specialists_schema`/`specialists_validate`, the `specialize` skill and pinned conversation snapshots.
 - [ ] Validate specialization capabilities and adapter forwarding across the installed harnesses.
-- [ ] Implement project/global definitions, strict resolution and effective configuration inspection.
+- [ ] Extend packages beyond declarative instructions: native tool/MCP bindings, model/memory settings and effective configuration inspection.
 - [ ] Prove a versioned reviewer on two compatible harnesses with persistent and fresh conversations.
 - [ ] Add fixture-based outcome/behavior evals and revision comparisons.
-- [ ] Add Claude-led authoring; assess a companion tool after that workflow is tested.
+- [ ] Grow the specialist ecosystem: adapt-from-native flows and team catalogs via normal Git review. No bridge-side publishing command or remote catalog is planned; management stays with the `specialize` skill and host file/Git tools.

@@ -1,12 +1,12 @@
 # Future features
 
-These items are planned directions, not shipped capabilities. The current Claude Code plugin delegates to local coding CLIs through Agent Client Protocol.
+These items mix shipped foundations with planned directions; each section names which parts are live. The current Claude Code plugin delegates to local coding CLIs through Agent Client Protocol.
 
-## Next major milestone: specialized agent packages
+## Next major milestone: specialized workers
 
-**Priority:** after worker interface/usability stabilization. **Status:** initial research and proposed design; no template runtime or authoring/eval command is shipped.
+**Priority:** after worker interface/usability stabilization. **Status:** first slice shipped. Declarative specializations are live: client-owned `.specialists` catalogs at `<project>/.specialists/<namespace>/<id>/specialist.yaml`, `~/.specialists/` or configured `specialistCatalogs:` roots supply instructions, delivery mode, provider/read-only restrictions and acceptance criteria; `specialists_catalog` discovery, `specialistRef`/`specialistSpec` delegation, `specialists_schema`/`specialists_validate` authoring support, the `specialize` skill and per-conversation pinned snapshots are implemented. Still future: evals, native tool/MCP bindings, model/memory settings and any remote or hosted catalog.
 
-Create versioned specialists with instructions/system-prompt intent, skills/context, native tool/MCP bindings, model settings, workspace/permission policy, scoped memory, deliverable contracts and evals. Save project definitions under `.agent-bridge/agents/` or personal definitions under `~/.agent-bridge/agents/`, with explicit precedence and separate runtime state. Start with Claude-led authoring; a companion tool can reuse the same package format and runtime later.
+Continue toward versioned specialists with skills/context, native tool/MCP bindings, model settings, workspace/permission policy, scoped memory, deliverable contracts and evals. Saved definitions under `.agent-bridge/agents/` and `~/.agent-bridge/agents/` remain the compatibility layer. Specialist files are managed by Claude's ordinary file/Git tools through the `specialize` skill; a companion UI could reuse the same file contract later.
 
 Reuse native harness facilities and the current persistent task/session machinery. Distinguish template, configured worker, conversation and task. Pin the effective template revision per conversation; show enforced versus instructed versus unsupported capabilities. Never silently weaken a required restriction for portability. Validate provider bindings and grade actual task outcomes before claiming support.
 

@@ -60,7 +60,7 @@ export function templateRoots(
   };
 }
 type Roots = ReturnType<typeof templateRoots>;
-function checkDirectories(directory: string) {
+export function checkDirectories(directory: string) {
   // Reject symlinked ancestor paths too; a bundle must live in its declared scope.
   let current = path.parse(path.resolve(directory)).root;
   for (const part of path
@@ -71,6 +71,20 @@ function checkDirectories(directory: string) {
     const stat = lstatSync(current);
     if (!stat.isDirectory() || stat.isSymbolicLink())
       throw Error("Unsafe agent definition directory");
+  }
+}
+export function readDefinitionFile(source: string) {
+  const fd = openSync(
+    source,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > 32000)
+      throw Error("Agent definition must be a regular file up to 32000 bytes");
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
   }
 }
 export function resolveTemplate(
@@ -110,23 +124,8 @@ export function resolveTemplate(
     }
     checkDirectories(directory);
     const source = path.join(directory, "agent.yaml");
-    const fd = openSync(
-      source,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    let text: string;
-    try {
-      const stat = fstatSync(fd);
-      if (!stat.isFile() || stat.nlink !== 1 || stat.size > 32000)
-        throw Error(
-          "Agent definition must be a regular file up to 32000 bytes",
-        );
-      text = readFileSync(fd, "utf8");
-    } finally {
-      closeSync(fd);
-    }
     const definition = templateDefinition.parse(
-      parse(text, { maxAliasCount: 20 }),
+      parse(readDefinitionFile(source), { maxAliasCount: 20 }),
     );
     if (definition.id !== requestedId)
       throw Error("Agent definition id must match its directory");
@@ -171,29 +170,41 @@ export function listTemplates(roots: Roots) {
   }
   return definitions;
 }
-export function validateTemplateBinding(
-  t: TemplateSnapshot,
+interface RestrictedDefinition {
+  delivery: "task-instructions" | "system-append";
+  providers?: string[];
+  requiresReadOnly: boolean;
+}
+export function validateDefinitionBinding(
+  d: RestrictedDefinition,
   config: Config,
   agentId: string,
 ) {
   const agent = config.agents[agentId];
   if (!agent) throw Error("Unknown agent");
-  if (t.providers && !t.providers.includes(agent.provider))
+  if (d.providers && !d.providers.includes(agent.provider))
     throw Error(`Agent definition does not support provider ${agent.provider}`);
-  if (t.requiresReadOnly && !config.providers[agent.provider].readOnlyEnforced)
+  if (d.requiresReadOnly && !config.providers[agent.provider].readOnlyEnforced)
     throw Error(
       "Agent definition requires provider-enforced read-only tools; an instruction is insufficient",
     );
   return {
-    delivery: t.delivery,
+    delivery: d.delivery,
     instructionAuthority:
-      t.delivery === "system-append"
+      d.delivery === "system-append"
         ? "experimental ACP system append; requires capability negotiation"
         : "user-task instructions; not a system prompt",
     toolPolicy: config.providers[agent.provider].readOnlyEnforced
       ? "provider-enforced read-only profile"
       : "native harness policy; no extra tool enforcement from this definition",
   };
+}
+export function validateTemplateBinding(
+  t: TemplateSnapshot,
+  config: Config,
+  agentId: string,
+) {
+  return validateDefinitionBinding(t, config, agentId);
 }
 
 // Creates a new definition only; updates are explicit file edits so existing data is never overwritten.

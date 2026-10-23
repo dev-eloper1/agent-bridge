@@ -42,7 +42,7 @@ try {
   else if (command === "init") console.log(initializeProject(config, value));
   else if (command === "help")
     console.log(
-      "bridge [--config agents.yaml] serve | mcp | init /path/to/project | list | dashboard | templates|define|spawn|status|steer|reply|events|result|artifact|wait|cancel JSON",
+      "bridge [--config agents.yaml] serve | mcp | init /path/to/project | list | dashboard | specialists_schema | specialists_validate | specialists_catalog | templates|define|spawn|status|steer|reply|events|result|artifact|wait|cancel JSON",
     );
   else
     console.log(

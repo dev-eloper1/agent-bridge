@@ -11,7 +11,7 @@ export async function mcp(config: Config, beforeCall?: () => Promise<void>) {
       "agents_run",
       {
         description:
-          "Optionally pass template for a saved definition; follow-ups omit it to reuse the pinned revision. Delegate ordinary coding/review work and wait for results in this tool call (up to 45 seconds). Unrelated new tasks get fresh context. Continue/same-session requests and follow-ups pass the matching prior agentSessionId and omit workspace; explicit fresh/new-session requests omit agentSessionId. Pass taskId alone to keep waiting on an existing foreground task. Default to the project folder. Cancellation/disconnection during this call cancels its task. Background work uses agents_spawn explicitly. Output begins at the start of the report; if outputComplete is false, read fullOutputRef from nextOutputOffset. Keep internal IDs out of normal user-facing prose.",
+          "Optionally pass exactly one of specialistRef for a persisted specialist discovered through specialists_catalog, specialistSpec for an inline one-off specialization, or template for a legacy saved definition; follow-ups omit all three to reuse the pinned snapshot. Delegate ordinary coding/review work and wait for results in this tool call (up to 45 seconds). Unrelated new tasks get fresh context. Continue/same-session requests and follow-ups pass the matching prior agentSessionId and omit workspace; explicit fresh/new-session requests omit agentSessionId. Pass taskId alone to keep waiting on an existing foreground task. Default to the project folder. Cancellation/disconnection during this call cancels its task. Background work uses agents_spawn explicitly. Output begins at the start of the report; if outputComplete is false, read fullOutputRef from nextOutputOffset. Keep internal IDs out of normal user-facing prose.",
         inputSchema: runInput.shape,
       },
       async (args, extra) => {
@@ -59,9 +59,15 @@ export async function mcp(config: Config, beforeCall?: () => Promise<void>) {
       "Create a new saved agent definition without overwriting existing files. Project scope is default; use global only when the user explicitly asks for a personal/global definition. This saves data, not running workers or installed tools. Inspect the definition and binding before delegation; system-append requires experimental provider support, task-instructions are not a system prompt. Unsupported fields are rejected.",
     templates:
       "List saved project/global agent definitions, or inspect a reference and optional agentId binding. Definitions are data, not running workers. Use agents_templates to inspect a saved definition; new delegation may pass template; follow-ups omit template to reuse the pinned revision. Inspect delivery and tool-policy limitations before dispatch.",
+    specialists_schema:
+      "Read the specialization authoring contract: required/optional fields, allowed delivery values, persisted catalog locations and path layout, what a specialization may never contain, and which input agents_run/agents_spawn accept. Call before writing or running a specialized worker; never writes anything.",
+    specialists_validate:
+      "Validate a specialization and preview worker binding compatibility without writing anything. Returns the specialization metadata and content digest plus binding or a concrete bindingError when agentId is given. Use before saving or running a specialization you authored or adapted.",
+    specialists_catalog:
+      "Discover persisted specialists in project, personal and configured catalogs. Call this only when the user names a specialized/client-provided agent or asks what specialists exist; ordinary delegation does not need it. No arguments lists bounded metadata; query matches names, namespaces and descriptions case-insensitively; reference inspects one specialization including instructions. Pass agentId to preview worker compatibility. Selection is natural-language; keep references internal.",
     list: "List configured external ACP workers, availability, negotiated capabilities and recent persistent conversations with stable workerName, folder and last task description. Use this to recover the matching agentSessionId for follow-ups. These are external agents, not native Claude subagents.",
     spawn:
-      "Optionally pass template for a saved definition. Follow-ups omit template to keep the pinned revision. Start a durable background task. Returns immediately. Choose workspace mode project (current files, no Git required), directory (existing path), temporary (new scratch folder), or isolated-worktree (committed Git HEAD). Omit for configured default. Every new task gets fresh context; pass agentSessionId only for an explicit follow-up. Use agents_run for ordinary foreground delegation. Turns within one conversation serialize; separate conversations on the same worker run in parallel up to maxConcurrentTasks. Folder selection does not enforce read-only tools; specify review-only scope in prompt. Verify acceptance independently.",
+      "Optionally pass exactly one of specialistRef for a persisted specialist from specialists_catalog, specialistSpec for an inline one-off specialization, or template for a legacy saved definition. Follow-ups omit all three to keep the pinned snapshot. Start a durable background task. Returns immediately. Choose workspace mode project (current files, no Git required), directory (existing path), temporary (new scratch folder), or isolated-worktree (committed Git HEAD). Omit for configured default. Every new task gets fresh context; pass agentSessionId only for an explicit follow-up. Use agents_run for ordinary foreground delegation. Turns within one conversation serialize; separate conversations on the same worker run in parallel up to maxConcurrentTasks. Folder selection does not enforce read-only tools; specify review-only scope in prompt. Verify acceptance independently.",
     status: "Read compact task status and pending question.",
     steer:
       "Queue a follow-up for the next ACP turn; NOT guaranteed live mid-turn steering. Maximum two follow-ups.",
@@ -81,7 +87,7 @@ export async function mcp(config: Config, beforeCall?: () => Promise<void>) {
     ? []
     : Object.keys(inputs)) as (keyof typeof inputs)[]) {
     server.registerTool(
-      `agents_${name}`,
+      name.startsWith("specialists_") ? name : `agents_${name}`,
       { description: descriptions[name], inputSchema: inputs[name].shape },
       async (args: Record<string, unknown>) => {
         try {

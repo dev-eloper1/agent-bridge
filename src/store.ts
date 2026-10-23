@@ -19,6 +19,10 @@ import { randomUUID } from "node:crypto";
 import type { Workspace, WorkspaceIdentity } from "./workspaces.js";
 import { z } from "zod";
 import { templateSnapshot, type TemplateSnapshot } from "./templates.js";
+import {
+  specialistSnapshot,
+  type SpecialistSnapshot,
+} from "./specialists.js";
 export const uid = (prefix: string) => `${prefix}_${randomUUID()}`;
 export const now = () => new Date().toISOString();
 export type Status =
@@ -44,6 +48,7 @@ export interface Session {
   recovery?: string;
   fingerprint: string;
   template?: TemplateSnapshot;
+  specialistSnapshot?: SpecialistSnapshot;
 }
 export interface Task {
   taskId: string;
@@ -68,6 +73,16 @@ export interface Task {
     version: string;
     digest: string;
     scope: string;
+    delivery: string;
+  };
+  specialist?: {
+    reference: string;
+    namespace: string;
+    id: string;
+    name: string;
+    version: string;
+    digest: string;
+    catalog: string;
     delivery: string;
   };
   provider?: string;
@@ -151,6 +166,7 @@ const storedState = z
           agentId: z.string(),
           fingerprint: z.string(),
           template: templateSnapshot.optional(),
+          specialistSnapshot: specialistSnapshot.optional(),
           workspaceIdentity: z
             .object({
               canonicalPath: z.string(),

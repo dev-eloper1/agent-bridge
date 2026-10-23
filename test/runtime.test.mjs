@@ -358,7 +358,7 @@ test("actual daemon crash preserves history/queue and MCP reconnect does not own
     });
     client = new Client({ name: "test", version: "1" });
     await client.connect(transport);
-    assert.equal((await client.listTools()).tools.length, 14);
+    assert.equal((await client.listTools()).tools.length, 17);
     const spawnResult = await client.callTool({
       name: "agents_spawn",
       arguments: { agentId: "one", prompt: "SLOW" },
