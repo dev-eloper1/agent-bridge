@@ -770,9 +770,9 @@ export class Runtime {
               a.inputsFrom.map((i: { taskId: string; maxChars: number }) => {
                 const src = this.store.state.tasks[i.taskId];
                 if (!src) throw Error(`inputsFrom: unknown task ${i.taskId}`);
-                if (src.status !== "completed")
+                if (!this.dependencyReady(i.taskId))
                   throw Error(
-                    `inputsFrom: task ${i.taskId} is ${src.status}, not completed`,
+                    `inputsFrom: task ${i.taskId} is ${src.status}, not completed with passed verification`,
                   );
                 return {
                   taskId: i.taskId,

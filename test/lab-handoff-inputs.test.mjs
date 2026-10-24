@@ -6,6 +6,8 @@ import path from "node:path";
 import { Runtime } from "../dist/runtime.js";
 import { loadConfig } from "../dist/config.js";
 import { buildHandoffPrompt, sliceCodePoints } from "../dist/handoff.js";
+// Direct runtime calls in this file exercise coordinator behavior.
+delete process.env.AGENT_BRIDGE_WORKER;
 const root = process.cwd();
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 function fixture() {
@@ -139,4 +141,44 @@ test("truncation never splits a surrogate pair", () => {
   assert.equal(sliceCodePoints("A\u{1F600}B", 3), "A\u{1F600}");
   assert.equal(sliceCodePoints("A\u20ACB", 2), "A\u20AC");
   assert.equal(sliceCodePoints("\u{1F600}", 5), "\u{1F600}");
+});
+
+
+test("F2: handoff sources require passed verification when a verify spec exists", async () => {
+  const r = new Runtime(fixture().config);
+  const verdict = async (taskId) => {
+    const end = Date.now() + 5000;
+    while (Date.now() < end) {
+      const task = r.store.task(taskId);
+      if (task.verification !== "pending") return task.verification;
+      await pause(10);
+    }
+    throw Error("Verification timed out");
+  };
+  const handoff = (taskId) => r.call("spawn", {
+    agentId: "one", prompt: "consume verified output", inputsFrom: [{ taskId }],
+  });
+  try {
+    const source = await r.call("spawn", {
+      agentId: "one", prompt: "verified source",
+      verify: { argv: [process.execPath, "-e", "setTimeout(() => {}, 500)"], timeoutMs: 2000 },
+    });
+    await done(r, source.taskId);
+    assert.equal(r.store.task(source.taskId).verification, "pending");
+    const before = Object.keys(r.store.state.tasks).length;
+    await assert.rejects(handoff(source.taskId), /not completed with passed verification/);
+    assert.equal(Object.keys(r.store.state.tasks).length, before);
+    assert.equal(await verdict(source.taskId), "passed");
+    const accepted = await handoff(source.taskId);
+    assert.equal((await done(r, accepted.taskId)).status, "completed");
+    const failed = await r.call("spawn", {
+      agentId: "one", prompt: "failed source",
+      verify: { argv: [process.execPath, "-e", "process.exit(7)"], timeoutMs: 2000 },
+    });
+    await done(r, failed.taskId);
+    assert.equal(await verdict(failed.taskId), "failed");
+    const count = Object.keys(r.store.state.tasks).length;
+    await assert.rejects(handoff(failed.taskId), /not completed with passed verification/);
+    assert.equal(Object.keys(r.store.state.tasks).length, count);
+  } finally { r.close(); }
 });
