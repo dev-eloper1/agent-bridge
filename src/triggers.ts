@@ -64,7 +64,7 @@ export class TriggerRegistry {
   ) {
     this.store.state.triggers ??= {};
     this.store.state.triggerBudget ??= { fires: [] };
-    // Migrate queued tasks from the original spike before scheduling resumes.
+    // Migrate queued tasks from the legacy format before scheduling resumes.
     for (const t of Object.values(this.records)) {
       const task = t.lastTaskId && this.store.state.tasks[t.lastTaskId];
       if (task) task.triggerId ??= t.id;

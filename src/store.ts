@@ -16,10 +16,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { VerifySpec, VerificationResult } from "./lab-verify-verdict.js";
+import type { VerifySpec, VerificationResult } from "./verify-verdict.js";
 import type { Workspace, WorkspaceIdentity } from "./workspaces.js";
 import { z } from "zod";
-import { storedTrigger, type Trigger } from "./lab-triggers.js";
+import { storedTrigger, type Trigger } from "./triggers.js";
 import { templateSnapshot, type TemplateSnapshot } from "./templates.js";
 import { specialistSnapshot, type SpecialistSnapshot } from "./specialists.js";
 export const uid = (prefix: string) => `${prefix}_${randomUUID()}`;
@@ -174,7 +174,7 @@ const storedTask = z
     verification: z.enum(["pending", "passed", "failed"]),
     followups: z.array(z.string()),
     steeringCount: z.number().int().nonnegative(),
-    // lab(lineage-labels): persisted lineage fields must match the API shape.
+    // persisted lineage fields must match the API shape.
     labels: z
       .array(z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,47}$/))
       .max(8)

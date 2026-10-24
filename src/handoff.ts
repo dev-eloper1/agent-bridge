@@ -1,4 +1,4 @@
-// Lab spike X4: bounded, provenance-labeled handoff of prior task output.
+// bounded, provenance-labeled handoff of prior task output.
 import { randomBytes } from "node:crypto";
 
 export const MAX_PROMPT_CHARS = 16000;

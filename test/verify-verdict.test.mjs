@@ -14,7 +14,7 @@ import { loadConfig } from "../dist/config.js";
 import { Store } from "../dist/store.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { verifyCommand } from "../dist/lab-verify-verdict.js";
+import { verifyCommand } from "../dist/verify-verdict.js";
 import { runInput } from "../dist/run.js";
 // This file exercises coordinator calls; worker guards are opted into explicitly below.
 delete process.env.AGENT_BRIDGE_WORKER;

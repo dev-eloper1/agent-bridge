@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { Runtime } from "../dist/runtime.js";
 import { loadConfig } from "../dist/config.js";
-import { MIN_INTERVAL_MS, MAX_TRIGGERS } from "../dist/lab-triggers.js";
+import { MIN_INTERVAL_MS, MAX_TRIGGERS } from "../dist/triggers.js";
 
 function fixture(t) {
   const dir = mkdtempSync(path.join(process.cwd(), ".trigger-test-"));
@@ -254,7 +254,7 @@ test("lab repair: per-trigger rolling fire cap records reason and survives reloa
 
 test("lab repair: aggregate fire cap bounds concurrent storm and survives deletion/reload", async (t) => {
   const { GLOBAL_MAX_FIRES, GLOBAL_WINDOW_MS } = await import(
-    "../dist/lab-triggers.js"
+    "../dist/triggers.js"
   );
   const f = fixture(t);
   let r = f.reload();

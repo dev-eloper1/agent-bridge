@@ -1,8 +1,8 @@
 import {
   snapshotVerifyInputs,
   changedVerifyInputs,
-} from "./lab-verify-inputs.js";
-import { verifySpec, verifyCommand } from "./lab-verify-verdict.js";
+} from "./verify-inputs.js";
+import { verifySpec, verifyCommand } from "./verify-verdict.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -51,11 +51,11 @@ import {
   validateSpecialistBinding,
 } from "./specialists.js";
 import { startDashboard } from "./dashboard.js";
-import { TriggerRegistry } from "./lab-triggers.js";
+import { TriggerRegistry } from "./triggers.js";
 import { buildId } from "./build-id.js";
 import { buildHandoffPrompt } from "./handoff.js";
 const taskId = z.string().regex(/^task_[a-f0-9-]{36}$/);
-// lab(lineage-labels): bounded, safe-charset group labels.
+// bounded, safe-charset group labels.
 const WAIT_LABEL_CAP = 10;
 const countTerminal = (byStatus: Record<string, number>) =>
   Object.entries(byStatus).reduce(
@@ -344,7 +344,7 @@ export class Runtime {
           : undefined,
     };
   }
-  // lab(lineage-labels): one pass over tasks; returns at most WAIT_LABEL_CAP
+  // one pass over tasks; returns at most WAIT_LABEL_CAP
   // tasks (still-open first, then blocked, then finished) plus group counts.
   labelGroup(label: string) {
     const open: Task[] = [];
@@ -763,7 +763,7 @@ export class Runtime {
           throw Error(
             "Use exactly one of specialistRef (persisted specialist), specialistSpec (inline) or template (legacy saved definition)",
           );
-        // Lab spike X4: resolve handoff inputs before any session/task state is created.
+        // resolve handoff inputs before any session/task state is created.
         const handoffPrompt = a.inputsFrom?.length
           ? buildHandoffPrompt(
               a.prompt,
@@ -846,7 +846,7 @@ export class Runtime {
             .digest("hex");
         const fingerprint = fingerprintFor(sessionAgent);
         const savedFingerprint = s?.fingerprint;
-        // The spike stored caps in fingerprints. Recognize only those legacy
+        // Legacy versions stored caps in fingerprints. Recognize only those legacy
         // hashes with identical session/provider settings and a valid old cap.
         if (
           s &&

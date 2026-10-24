@@ -1,4 +1,4 @@
-// X3 spike: only coordinator input reaches this runner; provider output is data.
+// only coordinator input reaches this runner; provider output is data.
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { allowlistedEnvironment } from "./acp.js";
