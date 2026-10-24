@@ -13,13 +13,12 @@ import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync } from "node:child_process";
+import { cliTestEnv } from "./helpers/cli-env.mjs";
 const root = process.cwd();
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function connect(dir, extra = {}) {
   const client = new Client({ name: "plugin-test", version: "1" });
-  // Exercise coordinator startup even when a delegated worker runs this suite.
-  // The explicit recursion test below still opts into worker mode through extra.
-  const env = { ...process.env, AGENT_BRIDGE_WORKER: "0", ...extra };
+  const env = cliTestEnv(extra);
   delete env.AGENT_BRIDGE_CONFIG;
   await client.connect(
     new StdioClientTransport({
@@ -324,7 +323,7 @@ const cliArgs = (command, input) => [
   ...(input === undefined ? [] : [JSON.stringify(input)]),
 ];
 const cliEnv = (home, extra = {}) => {
-  const env = { ...process.env, XDG_CONFIG_HOME: home };
+  const env = cliTestEnv({ XDG_CONFIG_HOME: home });
   delete env.AGENT_BRIDGE_CONFIG;
   return { ...env, ...extra };
 };
@@ -669,7 +668,7 @@ test("plugin-configure saves while tasks run and reports update_pending", async 
         }),
         {
           cwd: dir,
-          env: { ...process.env },
+          env: cliTestEnv(),
           encoding: "utf8",
           timeout: 90000,
         },

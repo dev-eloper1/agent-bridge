@@ -257,7 +257,12 @@ app.onRequest(
         },
       });
     }
-    if (text.includes("STDERRBURST")) process.stderr.write("e".repeat(5000));
+    if (text.includes("STDERRBURST")) {
+      process.stderr.write("e".repeat(5000));
+      // Stderr and ACP stdout are independent pipes; keep the prompt active
+      // long enough for the runtime to observe the deliberate budget violation.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     if (text.includes("WORKSPACE"))
       await update(
         JSON.stringify({
