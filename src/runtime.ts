@@ -51,6 +51,7 @@ import {
   validateSpecialistBinding,
 } from "./specialists.js";
 import { startDashboard } from "./dashboard.js";
+import { TriggerRegistry } from "./lab-triggers.js";
 import { buildId } from "./build-id.js";
 import { buildHandoffPrompt } from "./handoff.js";
 const taskId = z.string().regex(/^task_[a-f0-9-]{36}$/);
@@ -221,8 +222,20 @@ export class Runtime {
   readonly startedAt = now();
   dashboardServer?: Awaited<ReturnType<typeof startDashboard>>;
   dashboardStarting?: Promise<Awaited<ReturnType<typeof startDashboard>>>;
-  constructor(readonly config: Config) {
+  readonly triggers: TriggerRegistry;
+  private triggerTimer?: NodeJS.Timeout;
+  constructor(
+    readonly config: Config,
+    clock: () => number = Date.now,
+  ) {
     this.store = new Store(config.stateDir, config.runtime.maxArtifactBytes);
+    this.triggers = new TriggerRegistry(
+      this.store,
+      config,
+      (args, triggerId) => this.call("spawn", args, triggerId),
+      clock,
+      () => this.closed,
+    );
     const sessions = Object.values(this.store.state.sessions);
     const reserved = new Set(
       sessions.flatMap((s) => (s.workerName ? [s.workerName] : [])),
@@ -247,11 +260,21 @@ export class Runtime {
         t.finishedAt = now();
         t.summary = "Runtime restarted during execution; not replayed";
         delete t.question;
+        this.triggers.taskFinished(t);
         this.store.event(t, "task.failed", t.summary);
       }
     this.store.save();
   }
   start() {
+    if (this.closed) throw Error("Runtime closed");
+    if (!this.triggerTimer) {
+      const tick = () => {
+        void this.triggers.tick();
+      };
+      tick();
+      this.triggerTimer = setInterval(tick, 250);
+      this.triggerTimer.unref();
+    }
     this.schedule();
   }
   sanitize(s: string) {
@@ -375,7 +398,11 @@ export class Runtime {
           : "project",
     };
   }
-  async call(method: string, raw: unknown): Promise<unknown> {
+  async call(
+    method: string,
+    raw: unknown,
+    triggerId?: string,
+  ): Promise<unknown> {
     if (!(method in inputs) || !Object.hasOwn(inputs, method))
       throw Error("Unknown method");
     const a: any = inputs[method as Method].parse(raw);
@@ -902,6 +929,7 @@ export class Runtime {
           ? snapshotVerifyInputs(await this.workspace(s))
           : undefined;
         const t: Task = {
+          triggerId,
           taskId: uid("task"),
           agentId: a.agentId,
           agentSessionId: s.agentSessionId,
@@ -1185,6 +1213,13 @@ export class Runtime {
       const agentActive = [...this.active.values()].filter(
         (r) => r.task.agentId === t.agentId,
       ).length;
+      // Unattended work may never consume the final slot reserved for interactive work.
+      // With a concurrency limit of one, trigger tasks remain queued.
+      if (
+        t.triggerId &&
+        this.active.size >= this.config.runtime.maxConcurrentTasks - 1
+      )
+        continue;
       // Only turns within one conversation serialize; they share a native session.
       if (
         t.status === "queued" &&
@@ -1240,6 +1275,7 @@ export class Runtime {
       this.config.runtime.maxInlineChars,
     );
     t.finishedAt = now();
+    this.triggers.taskFinished(t);
     if (t.question) {
       const q = this.questions.get(t.question.questionId);
       q?.resolve(
@@ -1791,6 +1827,7 @@ export class Runtime {
     });
   }
   close() {
+    clearInterval(this.triggerTimer);
     this.dashboardServer?.server.close();
     this.closed = true;
     for (const r of this.active.values()) {

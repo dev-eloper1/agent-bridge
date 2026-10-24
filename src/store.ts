@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import type { VerifySpec, VerificationResult } from "./lab-verify-verdict.js";
 import type { Workspace, WorkspaceIdentity } from "./workspaces.js";
 import { z } from "zod";
+import { storedTrigger, type Trigger } from "./lab-triggers.js";
 import { templateSnapshot, type TemplateSnapshot } from "./templates.js";
 import { specialistSnapshot, type SpecialistSnapshot } from "./specialists.js";
 export const uid = (prefix: string) => `${prefix}_${randomUUID()}`;
@@ -54,6 +55,7 @@ export interface Session {
   sessionConfig?: SessionConfigState;
 }
 export interface Task {
+  triggerId?: string;
   taskId: string;
   agentId: string;
   agentSessionId: string;
@@ -137,6 +139,8 @@ export interface Event {
   artifactRefs: string[];
 }
 interface State {
+  triggerBudget?: { fires: number[] };
+  triggers?: Record<string, Trigger>;
   version: 1;
   tasks: Record<string, Task>;
   sessions: Record<string, Session>;
@@ -185,6 +189,8 @@ const storedTask = z
 const storedState = z
   .object({
     version: z.literal(1),
+    triggers: z.record(storedTrigger).optional(),
+    triggerBudget: z.object({ fires: z.array(z.number().finite()) }).optional(),
     tasks: z.record(storedTask),
     sessions: z.record(
       z
