@@ -52,6 +52,7 @@ import {
 } from "./specialists.js";
 import { startDashboard } from "./dashboard.js";
 import { buildId } from "./build-id.js";
+import { buildHandoffPrompt } from "./handoff.js";
 const taskId = z.string().regex(/^task_[a-f0-9-]{36}$/);
 const message = z.string().min(1).max(16000);
 export const inputs = {
@@ -105,6 +106,17 @@ export const inputs = {
         .optional(),
       description: z.string().min(1).max(120).optional(),
       execution: z.enum(["foreground", "background"]).default("background"),
+      inputsFrom: z
+        .array(
+          z
+            .object({
+              taskId,
+              maxChars: z.number().int().min(1).max(12000).default(4000),
+            })
+            .strict(),
+        )
+        .max(4)
+        .optional(),
     })
     .strict(),
   status: z.object({ taskId }).strict(),
@@ -639,6 +651,26 @@ export class Runtime {
           throw Error(
             "Use exactly one of specialistRef (persisted specialist), specialistSpec (inline) or template (legacy saved definition)",
           );
+        // Lab spike X4: resolve handoff inputs before any session/task state is created.
+        const handoffPrompt = a.inputsFrom?.length
+          ? buildHandoffPrompt(
+              a.prompt,
+              a.inputsFrom.map((i: { taskId: string; maxChars: number }) => {
+                const src = this.store.state.tasks[i.taskId];
+                if (!src) throw Error(`inputsFrom: unknown task ${i.taskId}`);
+                if (src.status !== "completed")
+                  throw Error(
+                    `inputsFrom: task ${i.taskId} is ${src.status}, not completed`,
+                  );
+                return {
+                  taskId: i.taskId,
+                  status: src.status,
+                  text: this.store.readArtifactText(i.taskId, "output.txt"),
+                  maxChars: i.maxChars,
+                };
+              }),
+            )
+          : undefined;
         if (a.taskKey) {
           const previous = Object.values(this.store.state.tasks).find(
             (t) => t.agentId === a.agentId && t.taskKey === a.taskKey,
@@ -819,7 +851,7 @@ export class Runtime {
             effective: {},
           },
         };
-        this.append(t, "prompt.txt", a.prompt);
+        this.append(t, "prompt.txt", handoffPrompt ?? a.prompt);
         this.store.state.tasks[t.taskId] = t;
         this.store.event(t, "task.queued", "Queued");
         setImmediate(() => this.schedule());
