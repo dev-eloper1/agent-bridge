@@ -573,3 +573,57 @@ Real macOS sandbox tests ran in both modes: state and alias reads, state writes,
 - **budget-pools:** Global, per-agent, conversation and permission limits compose; omitted caps retain parallelism; preference overrides and global clamps report diagnostics; cross-agent task budgets count retained terminal tasks, survive reload, and preserve idempotent task-key retries.
 - **trigger-to-task:** Real timer/event tasks; explicit workspace and trusted trigger identity; durable registry, restart handling, overlap suppression, event dedupe, fire budgets and failure circuit breaker; unattended tasks preserve the final interactive slot, including at global capacity one.
 - **worker-seatbelt:** Opt-in macOS isolation and explicit provider sandbox disablement, Codex full-access requirement, incompatible worktree rejection; guardian/provider and probes wrapped; quoted canonical/alias state and relocated socket/parent protections cover rename bypasses and both tmp spellings; ordinary workspace/HOME access works; seatbelt fields coexist with agent caps.
+
+# I4 review fixes
+
+Read the Claude integration review at `/Users/bhushan/Documents/Projects/agent-bridge-lab/hq/lab/verdicts/INTEGRATION_REVIEW.md` without editing it. Applied only findings F1–F5, in the requested priority order, as five separate commits. No push or live lab socket connection; all edits and tests stayed in this integration worktree. Earlier sections' `lab-*` source/test references describe their historical commits; F5 below maps them to the final product names.
+
+| Finding | Fix commit | Fix and evidence |
+| --- | --- | --- |
+| F1 HIGH | `bfe2dd8` | `src/runtime.ts:257` recovers completed tasks whose verify spec still has a pending verdict: preserve worker completion, fail verification with reason `restarted`, retain an output artifact reference, and persist `verification.failed`. The existing D11 sweep then fails dependents with the dependency ID and `verification failed: restarted`. `src/verify-verdict.ts:51` includes the new reason. Reload regression at `test/depends-on.test.mjs:403`; before/after evidence below. |
+| F2 MEDIUM | `5e84541` | `src/runtime.ts:782` reuses `dependencyReady` for handoff sources. Unknown sources remain rejected; completed verified sources require a passed verdict. `test/handoff-inputs.test.mjs:147` rejects pending/failed verification without creating tasks and accepts passed verification. Focused handoff suite: 9/9, exit 0. Existing tests retain completed/no-verify acceptance. |
+| F5 LOW | `12a2713` | Rename source modules to `triggers.ts`, `verify-inputs.ts`, `verify-verdict.ts`; rename all seven `test/lab-*.test.mjs` files to their feature names. Update imports, including Store persistence imports and dynamic test imports. Remove experimental lab/spike comment tags without changing behavior. Build plus dependency, handoff, trigger and verification suites: 51/51, exit 0. No `src/lab-*`, `test/lab-*`, experimental comment tags or old module imports remain in source/tests. |
+| F3 LOW | `d343232` | `src/runtime.ts:769` returns an existing same-agent/taskKey task before building handoff at line 776. `test/handoff-inputs.test.mjs:187` retries after deleting the source: returns the original task, reads no artifacts, and creates no tasks or sessions. Focused handoff suite: 10/10, exit 0. |
+| F4 LOW | `b2eeafe` | Keep the existing guard, with an explicit defense-in-depth comment at `src/runtime.ts:755`. This preserves direct in-process worker-context rejection while documenting that daemon environment is not socket-caller identity. Worker-mode MCP tool omission is the MCP boundary; opt-in seatbelt protects the socket. Existing worker-context, MCP exposure and seatbelt regressions run in both final suites. |
+
+## F1 red/green reload evidence
+
+The regression runs a real mock task with a delayed verifier, captures its persisted `completed`/`pending` state, stops the original processes, restores that crash snapshot, and creates a new Runtime. After scheduling, it asserts the worker remains completed, verification is failed with reason `restarted`, the failure event exists, and the queued dependent fails with the dependency ID/reason without ever starting. Cleanup closes the reloaded runtime before fixture removal.
+
+First ran the regression against the pre-fix runtime: exit 1, actual verification `pending`, expected `failed`. Built with the recovery branch and reran: exit 0. After the product renames, repeated the control with only that recovery branch temporarily removed from ignored generated `dist/runtime.js`, restored the generated file in a `finally` block, and reran the exact same test:
+
+`env -u AGENT_BRIDGE_WORKER node --test --test-name-pattern='F1: reload' test/depends-on.test.mjs`
+
+| Runtime | Exit | Tests | Pass | Fail | Duration (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Recovery branch absent | 1 | 1 | 0 | 1 | 529.444917 |
+| Recovery branch restored | 0 | 1 | 1 | 0 | 519.371416 |
+
+Red assertion excerpt:
+
+```text
+F1: reload fails interrupted verification and its queued dependent
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ 'pending'
+- 'failed'
+```
+
+Green excerpt:
+
+```text
+✔ F1: reload fails interrupted verification and its queued dependent
+ℹ tests 1
+ℹ pass 1
+ℹ fail 0
+```
+
+## Final validation
+
+Both final commands rebuilt TypeScript and exited 0 on the final source/test code:
+
+| Command | Tests | Pass | Fail | Cancelled | Skipped | Todo | Duration (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `env -u AGENT_BRIDGE_WORKER npm test` | 211 | 211 | 0 | 0 | 0 | 0 | 21724.969083 |
+| `AGENT_BRIDGE_WORKER=1 npm test` | 211 | 211 | 0 | 0 | 0 | 0 | 21989.060042 |
+
+All F1/F2/F3 regressions, the I2 cross-feature regression and real macOS seatbelt tests passed in both modes. `git diff --check` passed. Source/test scans confirm no old module filenames/imports or experimental lab comment tags; `lab/` remains absent. All requested fixes are committed locally within the nine-minute limit; nothing was pushed.
