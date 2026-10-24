@@ -1,3 +1,8 @@
+import {
+  snapshotVerifyInputs,
+  changedVerifyInputs,
+} from "./lab-verify-inputs.js";
+import { verifySpec, verifyCommand } from "./lab-verify-verdict.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -92,6 +97,7 @@ export const inputs = {
       template: templateRef.optional(),
       taskKey: z.string().min(1).max(100).optional(),
       acceptanceCriteria: z.array(z.string().max(500)).max(20).default([]),
+      verify: verifySpec.optional(),
       workspace: workspaceInput.optional(),
       agentSessionId: z
         .string()
@@ -145,6 +151,7 @@ export const inputs = {
 };
 type Method = keyof typeof inputs;
 interface Active {
+  verificationAbort?: AbortController;
   streaming: boolean;
   outputPrefix: string;
   task: Task;
@@ -621,6 +628,8 @@ export class Runtime {
             };
           });
       case "spawn": {
+        if (a.verify && process.env.AGENT_BRIDGE_WORKER === "1")
+          throw Error("Only the coordinator may supply verify");
         const agent = this.config.agents[a.agentId];
         if (!agent) throw Error("Unknown agent");
         if (
@@ -753,6 +762,9 @@ export class Runtime {
             },
           };
         }
+        const verifyInputs = a.verify
+          ? snapshotVerifyInputs(await this.workspace(s))
+          : undefined;
         const t: Task = {
           taskId: uid("task"),
           agentId: a.agentId,
@@ -798,6 +810,8 @@ export class Runtime {
               }
             : undefined,
           verification: "pending",
+          verify: a.verify,
+          verifyInputs,
           followups: [],
           steeringCount: 0,
           sessionConfig: {
@@ -884,6 +898,7 @@ export class Runtime {
             "stderr.txt",
             "diff.patch",
             "recovery.jsonl",
+            "verification.txt",
           ]
             .filter((n) => this.store.artifactSize(t.taskId, n) !== undefined)
             .map((n) => `artifact://${t.taskId}/${n}`),
@@ -1049,6 +1064,7 @@ export class Runtime {
     );
   }
   interrupt(r: Active) {
+    r.verificationAbort?.abort();
     const s = this.session(r.task);
     if (r.worker && s.nativeSessionId) void r.worker.cancel(s.nativeSessionId);
     // Terminate immediately after sending best-effort cancel; do not reuse a possibly busy process.
@@ -1313,6 +1329,59 @@ export class Runtime {
       );
     }
     this.finish(t, "completed", t.summary || "Completed; inspect artifacts");
+    if (t.verify) {
+      clearTimeout(r.timer); // Verification has its own timeout, separate from worker runtime.
+      r.verificationAbort = new AbortController();
+      verifyWorkspace(cwd, s.workspaceIdentity);
+      let inputsChanged = changedVerifyInputs(t.verifyInputs ?? {}, cwd);
+      const result =
+        inputsChanged.length && !t.verify.allowInputsChanged
+          ? {
+              passed: false,
+              output: Buffer.from(
+                "Verification inputs changed: " + inputsChanged.join(", "),
+              ),
+              exitCode: null,
+              signal: null,
+              reason: "tampered" as const,
+            }
+          : await verifyCommand(
+              t.verify,
+              cwd,
+              Math.min(8192, this.config.runtime.maxArtifactBytes),
+              r.verificationAbort.signal,
+            );
+      inputsChanged = [
+        ...new Set([
+          ...inputsChanged,
+          ...changedVerifyInputs(t.verifyInputs ?? {}, cwd),
+        ]),
+      ];
+      if (inputsChanged.length && !t.verify.allowInputsChanged) {
+        result.passed = false;
+        result.reason = "tampered";
+      }
+      const text = Buffer.from(
+        this.sanitize(result.output.toString("utf8")),
+      ).subarray(-Math.min(8192, this.config.runtime.maxArtifactBytes));
+      // Store accepts strings; decode without expanding malformed UTF-8 past the budget.
+      const output = text.toString("utf8").replace(/\uFFFD/g, "?");
+      this.append(t, "verification.txt", output);
+      t.verification = result.passed ? "passed" : "failed";
+      t.verificationResult = {
+        inputsChanged,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        reason: result.reason,
+        outputRef: `artifact://${t.taskId}/verification.txt`,
+        outputTail: output.slice(-this.config.runtime.maxInlineChars),
+      };
+      this.store.event(
+        t,
+        `verification.${t.verification}`,
+        `Verification ${t.verification}: ${result.reason}`,
+      );
+    }
   }
   update(key: string, value: any) {
     const r = this.active.get(key);

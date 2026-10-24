@@ -16,6 +16,25 @@ import {
   normalizeSessionSettings,
   validateSessionSetting,
 } from "./session-settings.js";
+// Shared by providers and verification: never inherit the entire coordinator env.
+export function allowlistedEnvironment(
+  envNames: string[] = [],
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of [
+    "PATH",
+    "HOME",
+    "USER",
+    "TMPDIR",
+    "LANG",
+    "SHELL",
+    "SystemRoot",
+    ...envNames,
+  ])
+    if (key !== "AGENT_BRIDGE_WORKER" && process.env[key])
+      env[key] = process.env[key];
+  return env;
+}
 export class Worker {
   child: ChildProcessWithoutNullStreams;
   connection: ClientConnection;
@@ -33,18 +52,7 @@ export class Worker {
     },
   ) {
     const p = c.providers[providerId];
-    const env: NodeJS.ProcessEnv = {};
-    for (const key of [
-      "PATH",
-      "HOME",
-      "USER",
-      "TMPDIR",
-      "LANG",
-      "SHELL",
-      "SystemRoot",
-      ...p.envNames,
-    ])
-      if (process.env[key]) env[key] = process.env[key];
+    const env = allowlistedEnvironment(p.envNames);
     Object.assign(env, p.env);
     env.AGENT_BRIDGE_WORKER = "1";
     env.PATH = executablePath(env);

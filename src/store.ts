@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import type { VerifySpec, VerificationResult } from "./lab-verify-verdict.js";
 import type { Workspace, WorkspaceIdentity } from "./workspaces.js";
 import { z } from "zod";
 import { templateSnapshot, type TemplateSnapshot } from "./templates.js";
@@ -68,7 +69,10 @@ export interface Task {
   description?: string;
   execution?: "foreground" | "background";
   acceptanceCriteria: string[];
-  verification: "pending";
+  verification: "pending" | "passed" | "failed";
+  verify?: VerifySpec;
+  verifyInputs?: Record<string, string>;
+  verificationResult?: VerificationResult;
   template?: {
     id: string;
     name: string;
@@ -155,7 +159,7 @@ const storedTask = z
     createdAt: z.string(),
     summary: z.string(),
     acceptanceCriteria: z.array(z.string()),
-    verification: z.literal("pending"),
+    verification: z.enum(["pending", "passed", "failed"]),
     followups: z.array(z.string()),
     steeringCount: z.number().int().nonnegative(),
   })
