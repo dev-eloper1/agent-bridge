@@ -251,6 +251,13 @@ export class Runtime {
   append(t: Task, name: string, value: string) {
     this.store.append(t.taskId, name, this.sanitize(value));
   }
+  dependencyReady(id: string) {
+    const dependency = this.store.state.tasks[id];
+    return (
+      dependency?.status === "completed" &&
+      (!dependency.verify || dependency.verification === "passed")
+    );
+  }
   queue(t: Task) {
     const queued = Object.values(this.store.state.tasks).filter(
       (x) => x.status === "queued",
@@ -265,9 +272,7 @@ export class Runtime {
       );
     const waitingOnDependency =
       t.status === "queued" &&
-      (t.dependsOn ?? []).some(
-        (id) => this.store.state.tasks[id]?.status !== "completed",
-      );
+      (t.dependsOn ?? []).some((id) => !this.dependencyReady(id));
     const index = queued.findIndex((x) => x.taskId === t.taskId);
     return {
       queuePosition: index >= 0 ? index + 1 : undefined,
@@ -1039,15 +1044,21 @@ export class Runtime {
         const dependency = this.store.state.tasks[id];
         return (
           !dependency ||
-          (terminal(dependency.status) && dependency.status !== "completed")
+          (terminal(dependency.status) && dependency.status !== "completed") ||
+          (dependency.verify && dependency.verification === "failed")
         );
       });
-      if (failed)
+      if (failed) {
+        const dependency = this.store.state.tasks[failed];
+        const verification = dependency?.verify
+          ? `; verification ${dependency.verification}: ${dependency.verificationResult?.reason ?? "pending"}`
+          : "";
         this.finish(
           t,
           "failed",
-          `Dependency ${failed} did not complete successfully (${this.store.state.tasks[failed]?.status ?? "missing"})`,
+          `Dependency ${failed} did not complete successfully (${dependency?.status ?? "missing"}${verification})`,
         );
+      }
     }
     const waitingPermission = new Set(
       [...this.active.values()]
@@ -1063,9 +1074,7 @@ export class Runtime {
       // Only turns within one conversation serialize; they share a native session.
       if (
         t.status === "queued" &&
-        (t.dependsOn ?? []).every(
-          (id) => this.store.state.tasks[id]?.status === "completed",
-        ) &&
+        (t.dependsOn ?? []).every((id) => this.dependencyReady(id)) &&
         !this.active.has(t.agentSessionId) &&
         !waitingPermission.has(t.agentId)
       )
@@ -1209,6 +1218,29 @@ export class Runtime {
     try {
       await Promise.race([this.execute(r), interrupted]);
     } catch (e) {
+      // Worker completion precedes verification. An exception after completion
+      // must settle the verdict so queued dependents cannot wait forever.
+      if (
+        this.store.task(t.taskId).status === "completed" &&
+        t.verify &&
+        t.verification === "pending"
+      ) {
+        t.verification = "failed";
+        t.verificationResult = {
+          exitCode: null,
+          signal: null,
+          reason: "error",
+          outputRef: `artifact://${t.taskId}/output.txt`,
+          outputTail: this.sanitize(String(e)).slice(
+            -this.config.runtime.maxInlineChars,
+          ),
+        };
+        this.store.event(
+          t,
+          "verification.failed",
+          `Verification failed: error (${t.verificationResult.outputTail})`,
+        );
+      }
       this.finish(t, "failed", e instanceof Error ? e.message : String(e));
       (r.worker ?? this.workers.get(t.agentSessionId))?.kill();
       this.workers.delete(t.agentSessionId);

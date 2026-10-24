@@ -240,3 +240,78 @@ test("lab: restart preserves queued dependency graph and resumes in dependency o
     );
   }
 });
+
+// Direct runtime calls in this file act as the coordinator in both test modes.
+delete process.env.AGENT_BRIDGE_WORKER;
+const check = (code) => ({
+  argv: [process.execPath, "-e", code],
+  timeoutMs: 2000,
+});
+
+test("D11: passed verification releases dependents only after the verdict", async (t) => {
+  const r = fixture(t, 3);
+  const a = await r.call("spawn", {
+    agentId: "demo",
+    prompt: "ASK verified dependency",
+    verify: check("setTimeout(() => {}, 300)"),
+  });
+  const b = await spawn(r, "dependent", [a.taskId]);
+  await release(r, a);
+  assert.equal((await status(r, a)).verification, "pending");
+  r.schedule(); // A spare slot cannot bypass verification after worker completion.
+  assert.equal((await status(r, b)).status, "queued");
+  assert.equal((await status(r, b)).queueReason, "waiting_on_dependency");
+  await until(
+    () => status(r, a),
+    (value) => value.verification === "passed",
+  );
+  assert.equal((await waitStatus(r, b, "completed")).status, "completed");
+});
+
+test("D11: failed, tampered and errored verification fail dependents with the dependency and verdict", async (t) => {
+  for (const [reason, spec] of [
+    ["exit", check("process.exit(7)")],
+    [
+      "tampered",
+      check("require('node:fs').writeFileSync('package.json', '{}')"),
+    ],
+    [
+      "spawn_error",
+      { argv: [path.join(root, ".missing-d11-verifier")], timeoutMs: 2000 },
+    ],
+    ["error", check("0")],
+  ]) {
+    const r = fixture(t, 3);
+    if (reason === "error") {
+      const append = r.append.bind(r);
+      r.append = (task, name, value) => {
+        if (name === "verification.txt")
+          throw Error("injected verification storage failure");
+        return append(task, name, value);
+      };
+    }
+    const a = await r.call("spawn", {
+      agentId: "demo",
+      prompt: "ASK failing dependency",
+      verify: spec,
+    });
+    const b = await spawn(r, "dependent", [a.taskId]);
+    const c = await spawn(r, "transitive dependent", [b.taskId]);
+    await release(r, a);
+    const failed = await waitStatus(r, b, "failed");
+    assert.ok(failed.summary.includes(a.taskId));
+    assert.ok(failed.summary.includes(`verification failed: ${reason}`));
+    assert.equal(failed.startedAt, undefined);
+    assert.equal((await status(r, a)).verification, "failed");
+    assert.ok((await waitStatus(r, c, "failed")).summary.includes(b.taskId));
+  }
+});
+
+test("D11: dependencies without verify still release on completed with a pending verdict", async (t) => {
+  const r = fixture(t);
+  const a = await spawn(r, "ASK unchecked dependency");
+  const b = await spawn(r, "dependent", [a.taskId]);
+  await release(r, a);
+  assert.equal((await status(r, a)).verification, "pending");
+  assert.equal((await waitStatus(r, b, "completed")).status, "completed");
+});
