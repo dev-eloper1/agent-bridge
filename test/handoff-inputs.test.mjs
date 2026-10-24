@@ -182,3 +182,29 @@ test("F2: handoff sources require passed verification when a verify spec exists"
     assert.equal(Object.keys(r.store.state.tasks).length, count);
   } finally { r.close(); }
 });
+
+
+test("F3: idempotent retry returns the accepted task without rebuilding handoff", async () => {
+  const r = new Runtime(fixture().config);
+  try {
+    const source = await r.call("spawn", { agentId: "one", prompt: "source" });
+    await done(r, source.taskId);
+    const args = {
+      agentId: "one", prompt: "consume once", taskKey: "handoff-retry",
+      inputsFrom: [{ taskId: source.taskId }],
+    };
+    const accepted = await r.call("spawn", args);
+    await done(r, accepted.taskId);
+    delete r.store.state.tasks[source.taskId];
+    const tasks = Object.keys(r.store.state.tasks).length;
+    const sessions = Object.keys(r.store.state.sessions).length;
+    const read = r.store.readArtifactText.bind(r.store);
+    let reads = 0;
+    r.store.readArtifactText = (...args) => { reads++; return read(...args); };
+    const retry = await r.call("spawn", args);
+    assert.equal(retry.taskId, accepted.taskId);
+    assert.equal(reads, 0, "retry does not read or rebuild the handoff");
+    assert.equal(Object.keys(r.store.state.tasks).length, tasks);
+    assert.equal(Object.keys(r.store.state.sessions).length, sessions);
+  } finally { r.close(); }
+});

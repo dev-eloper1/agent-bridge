@@ -763,6 +763,12 @@ export class Runtime {
           throw Error(
             "Use exactly one of specialistRef (persisted specialist), specialistSpec (inline) or template (legacy saved definition)",
           );
+        if (a.taskKey) {
+          const previous = Object.values(this.store.state.tasks).find(
+            (t) => t.agentId === a.agentId && t.taskKey === a.taskKey,
+          );
+          if (previous) return this.compact(previous);
+        }
         // resolve handoff inputs before any session/task state is created.
         const handoffPrompt = a.inputsFrom?.length
           ? buildHandoffPrompt(
@@ -783,12 +789,6 @@ export class Runtime {
               }),
             )
           : undefined;
-        if (a.taskKey) {
-          const previous = Object.values(this.store.state.tasks).find(
-            (t) => t.agentId === a.agentId && t.taskKey === a.taskKey,
-          );
-          if (previous) return this.compact(previous);
-        }
         for (const dependencyId of a.dependsOn ?? [])
           if (!Object.hasOwn(this.store.state.tasks, dependencyId))
             throw Error(`Unknown dependency: ${dependencyId}`);
