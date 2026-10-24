@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Runtime, inputs } from "../dist/runtime.js";
@@ -397,4 +397,37 @@ test("I2: labelled fan-out, agent caps, trigger reserve and verified join compos
       assert.ok(dispatch.agents.filter((id) => id === agent).length <= 1, `${agent} cap at ${dispatch.taskId}`);
     if (dispatch.trigger) assert.ok(dispatch.before < 1, "trigger leaves an interactive slot");
   }
+});
+
+
+test("F1: reload fails interrupted verification and its queued dependent", async (t) => {
+  const r = fixture(t, 3);
+  const dependency = await r.call("spawn", {
+    agentId: "demo", prompt: "ASK interrupted verifier",
+    verify: check("setTimeout(() => {}, 1500)"),
+  });
+  const dependent = await spawn(r, "must not wait forever", [dependency.taskId]);
+  await release(r, dependency);
+  assert.equal(r.store.task(dependency.taskId).verification, "pending");
+  const stateFile = path.join(r.config.stateDir, "state.json");
+  // Capture the durable crash boundary, then stop processes before restoring it.
+  const snapshot = readFileSync(stateFile, "utf8");
+  r.close();
+  await until(() => r.active.size, (size) => size === 0);
+  writeFileSync(stateFile, snapshot);
+  const reloaded = new Runtime(r.config);
+  try {
+  reloaded.start();
+  const recovered = reloaded.store.task(dependency.taskId);
+  assert.equal(recovered.status, "completed");
+  assert.equal(recovered.verification, "failed");
+  assert.equal(recovered.verificationResult.reason, "restarted");
+  assert.ok(reloaded.store.state.events.some((event) =>
+    event.taskId === dependency.taskId && event.type === "verification.failed"));
+  const failed = reloaded.store.task(dependent.taskId);
+  assert.equal(failed.status, "failed");
+  assert.match(failed.summary, /verification failed: restarted/);
+  assert.ok(failed.summary.includes(dependency.taskId));
+  assert.equal(failed.startedAt, undefined);
+  } finally { reloaded.close(); }
 });

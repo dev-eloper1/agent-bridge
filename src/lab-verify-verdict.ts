@@ -48,6 +48,7 @@ export interface VerificationResult {
     | "timeout"
     | "spawn_error"
     | "error"
+    | "restarted"
     | "aborted"
     | "output_limit"
     | "tampered";

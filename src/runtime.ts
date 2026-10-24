@@ -254,7 +254,20 @@ export class Runtime {
       }
       for (const task of history) task.workerName = session.workerName;
     }
-    for (const t of Object.values(this.store.state.tasks))
+    for (const t of Object.values(this.store.state.tasks)) {
+      if (t.status === "completed" && t.verify && t.verification === "pending") {
+        t.verification = "failed";
+        t.verificationResult = {
+          exitCode: null,
+          signal: null,
+          reason: "restarted",
+          outputRef: `artifact://${t.taskId}/output.txt`,
+          outputTail: "Runtime restarted during verification; not replayed".slice(
+            -this.config.runtime.maxInlineChars,
+          ),
+        };
+        this.store.event(t, "verification.failed", "Verification failed: restarted");
+      }
       if (!terminal(t.status) && t.status !== "queued") {
         t.status = "failed";
         t.finishedAt = now();
@@ -263,6 +276,7 @@ export class Runtime {
         this.triggers.taskFinished(t);
         this.store.event(t, "task.failed", t.summary);
       }
+    }
     this.store.save();
   }
   start() {
