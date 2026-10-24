@@ -34,7 +34,15 @@ export const workspacePreferences = z
       .strict(),
     useManagedDefaults: z.boolean().default(false),
     agents: z
-      .record(key, z.object({ sessionConfig }).strict())
+      .record(
+        key,
+        z
+          .object({
+            sessionConfig: sessionConfig.default({}),
+            maxConcurrent: z.number().int().min(1).max(16).optional(),
+          })
+          .strict(),
+      )
       .refine((o) => Object.keys(o).length <= 200)
       .default({}),
     runtime: z

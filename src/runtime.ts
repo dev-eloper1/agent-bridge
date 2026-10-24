@@ -9,7 +9,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
-import type { Config } from "./config.js";
+import { agentConcurrency, type Config } from "./config.js";
 import {
   Store,
   uid,
@@ -114,6 +114,13 @@ export const inputs = {
         .describe(
           "Existing task IDs that must all complete before this task runs; any unsuccessful dependency fails this task",
         ),
+      budgetLabel: z
+        .string()
+        .regex(/^[a-zA-Z0-9_-]{1,64}$/)
+        .describe(
+          "Optional configured runtime.taskBudgets label. Counts accepted tasks across agents in retained runtime state, including terminal tasks; retries with the same taskKey do not spend again.",
+        )
+        .optional(),
       acceptanceCriteria: z.array(z.string().max(500)).max(20).default([]),
       verify: verifySpec.optional(),
       workspace: workspaceInput.optional(),
@@ -331,6 +338,7 @@ export class Runtime {
     const { acceptanceCriteria, ...rest } = t;
     return {
       ...rest,
+      agentConcurrency: agentConcurrency(this.config, t.agentId),
       acceptanceCriteriaCount: acceptanceCriteria.length,
       followups: t.followups.length,
       ...this.queue(t),
@@ -460,6 +468,7 @@ export class Runtime {
               id,
               {
                 provider: a.provider,
+                agentConcurrency: agentConcurrency(this.config, id),
                 workspace: a.workspace,
                 sessionConfig: a.sessionConfig,
               },
@@ -742,6 +751,18 @@ export class Runtime {
         for (const dependencyId of a.dependsOn ?? [])
           if (!Object.hasOwn(this.store.state.tasks, dependencyId))
             throw Error(`Unknown dependency: ${dependencyId}`);
+        if (a.budgetLabel) {
+          const budget = this.config.runtime.taskBudgets?.[a.budgetLabel];
+          if (!budget)
+            throw Error(`Unknown task budget label: ${a.budgetLabel}`);
+          const used = Object.values(this.store.state.tasks).filter(
+            (t) => t.budgetLabel === a.budgetLabel,
+          ).length;
+          if (used >= budget.maxTasks)
+            throw Error(
+              `Task budget ${a.budgetLabel} exhausted: maxTasks=${budget.maxTasks}`,
+            );
+        }
         if (
           Object.values(this.store.state.tasks).filter(
             (t) => !terminal(t.status),
@@ -771,14 +792,31 @@ export class Runtime {
           : undefined;
         if (a.agentSessionId && !s)
           throw Error("Unknown conversation for this worker");
-        const fingerprint = createHash("sha256")
-          .update(
-            JSON.stringify({
-              agent,
-              provider: this.config.providers[agent.provider],
-            }),
+        // Quota policy changes scheduling, not the durable provider session.
+        const { maxConcurrent: _maxConcurrent, ...sessionAgent } = agent;
+        const fingerprintFor = (sessionAgent: unknown) =>
+          createHash("sha256")
+            .update(
+              JSON.stringify({
+                agent: sessionAgent,
+                provider: this.config.providers[agent.provider],
+              }),
+            )
+            .digest("hex");
+        const fingerprint = fingerprintFor(sessionAgent);
+        const savedFingerprint = s?.fingerprint;
+        // The spike stored caps in fingerprints. Recognize only those legacy
+        // hashes with identical session/provider settings and a valid old cap.
+        if (
+          s &&
+          s.fingerprint !== fingerprint &&
+          Array.from({ length: 16 }, (_, i) => i + 1).some(
+            (maxConcurrent) =>
+              savedFingerprint ===
+              fingerprintFor({ ...sessionAgent, maxConcurrent }),
           )
-          .digest("hex");
+        )
+          s.fingerprint = fingerprint;
         if (s && s.fingerprint !== fingerprint)
           throw Error(
             "Provider/workspace configuration changed for durable conversation; start a fresh conversation",
@@ -877,6 +915,7 @@ export class Runtime {
           dependsOn: a.dependsOn,
           labels: a.labels?.length ? [...new Set<string>(a.labels)] : undefined,
           parentTaskId: a.parentTaskId,
+          budgetLabel: a.budgetLabel,
           description: this.sanitize(
             a.description ?? a.prompt.split("\n")[0],
           ).slice(0, 120),
@@ -1139,10 +1178,18 @@ export class Runtime {
     );
     for (const t of Object.values(this.store.state.tasks)) {
       if (this.active.size >= this.config.runtime.maxConcurrentTasks) break;
+      const agentLimit = agentConcurrency(
+        this.config,
+        t.agentId,
+      ).effectiveMaxConcurrent;
+      const agentActive = [...this.active.values()].filter(
+        (r) => r.task.agentId === t.agentId,
+      ).length;
       // Only turns within one conversation serialize; they share a native session.
       if (
         t.status === "queued" &&
         (t.dependsOn ?? []).every((id) => this.dependencyReady(id)) &&
+        agentActive < agentLimit &&
         !this.active.has(t.agentSessionId) &&
         !waitingPermission.has(t.agentId)
       )

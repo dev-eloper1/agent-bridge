@@ -263,6 +263,7 @@ export function compilePluginConfig(
         id,
         {
           ...a,
+          maxConcurrent: prefs?.agents[id]?.maxConcurrent ?? a.maxConcurrent,
           sessionConfig: { ...(prefs?.agents[id]?.sessionConfig ?? {}) },
         },
       ]),

@@ -28,6 +28,14 @@ export const schema = z
         stateDir: z.string().default(".agent-bridge"),
         workspaceRoot: z.string().optional(),
         maxConcurrentTasks: z.number().int().min(1).max(16).default(2),
+        taskBudgets: z
+          .record(
+            id,
+            z
+              .object({ maxTasks: z.number().int().min(1).max(1000000) })
+              .strict(),
+          )
+          .optional(),
         maxRuntimeMs: z.number().int().min(100).max(86400000).default(7200000),
         maxInlineChars: z.number().int().min(100).max(6000).default(2000),
         maxArtifactBytes: z
@@ -57,6 +65,7 @@ export const schema = z
             .refine((o) => Object.keys(o).length <= 20)
             .default({}),
           internal: z.boolean().default(false),
+          maxConcurrent: z.number().int().min(1).max(16).optional(),
         })
         .strict(),
     ),
@@ -93,6 +102,19 @@ export type Config = z.infer<typeof schema> & {
   sourceFile: string;
   configDigest: string;
 };
+export function agentConcurrency(config: Config, agentId: string) {
+  const requestedMaxConcurrent =
+    config.agents[agentId]?.maxConcurrent ?? config.runtime.maxConcurrentTasks;
+  const effectiveMaxConcurrent = Math.min(
+    requestedMaxConcurrent,
+    config.runtime.maxConcurrentTasks,
+  );
+  return {
+    requestedMaxConcurrent,
+    effectiveMaxConcurrent,
+    clamped: effectiveMaxConcurrent < requestedMaxConcurrent,
+  };
+}
 export function loadConfig(file = "agents.yaml"): Config {
   const sourceFile = realpathSync(path.resolve(file));
   const base = path.dirname(sourceFile);

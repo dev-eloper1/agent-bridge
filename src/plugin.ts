@@ -297,14 +297,17 @@ export async function pluginConfigure(
   const agents = Object.fromEntries(
     Object.entries(existing?.agents ?? {}).map(([id, a]) => [
       id,
-      { sessionConfig: { ...a.sessionConfig } },
+      { ...a, sessionConfig: { ...a.sessionConfig } },
     ]),
   );
   if ("clear" in input) {
     const entry = agents[input.agentId];
     if (entry) {
       delete entry.sessionConfig[input.configId];
-      if (!Object.keys(entry.sessionConfig).length)
+      if (
+        !Object.keys(entry.sessionConfig).length &&
+        entry.maxConcurrent === undefined
+      )
         delete agents[input.agentId];
     }
   } else {
@@ -319,6 +322,7 @@ export async function pluginConfigure(
       );
     validateSessionSetting(probe.options, input.configId, input.value);
     agents[input.agentId] = {
+      ...agents[input.agentId],
       sessionConfig: {
         ...(agents[input.agentId]?.sessionConfig ?? {}),
         [input.configId]: input.value,

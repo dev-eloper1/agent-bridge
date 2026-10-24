@@ -69,6 +69,7 @@ export interface Task {
   dependsOn?: string[];
   labels?: string[];
   parentTaskId?: string;
+  budgetLabel?: string;
   description?: string;
   execution?: "foreground" | "background";
   acceptanceCriteria: string[];
