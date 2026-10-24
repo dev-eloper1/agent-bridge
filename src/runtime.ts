@@ -752,6 +752,9 @@ export class Runtime {
             };
           });
       case "spawn": {
+        // Defense in depth for direct in-process callers only: this is the
+        // daemon environment, not socket-caller identity. Worker-mode MCP
+        // exposes no tools; opt-in seatbelt denies access to the runtime socket.
         if (a.verify && process.env.AGENT_BRIDGE_WORKER === "1")
           throw Error("Only the coordinator may supply verify");
         const agent = this.config.agents[a.agentId];
