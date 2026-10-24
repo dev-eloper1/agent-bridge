@@ -315,3 +315,86 @@ test("D11: dependencies without verify still release on completed with a pending
   assert.equal((await status(r, a)).verification, "pending");
   assert.equal((await waitStatus(r, b, "completed")).status, "completed");
 });
+
+test("I2: labelled fan-out, agent caps, trigger reserve and verified join compose", async (t) => {
+  const r = fixture(t, 2);
+  r.config.agents.demo.maxConcurrent = 1;
+  r.config.agents.other = { ...r.config.agents.demo };
+  r.config.runtime.taskBudgets = { fanout: { maxTasks: 3 } };
+  const dispatches = [];
+  const run = r.run.bind(r);
+  r.run = (task) => {
+    const before = r.active.size;
+    const result = run(task);
+    dispatches.push({
+      taskId: task.taskId,
+      trigger: Boolean(task.triggerId),
+      before,
+      agents: [...r.active.values()].map((a) => a.task.agentId),
+      dependenciesReady: (task.dependsOn ?? []).every((id) => r.dependencyReady(id)),
+    });
+    return result;
+  };
+  const fan = (agentId, prompt, parentTaskId) => r.call("spawn", {
+    agentId, prompt, labels: ["i2-fanout"], budgetLabel: "fanout",
+    ...(parentTaskId ? { parentTaskId } : {}),
+  });
+  const a = await fan("demo", "ASK first fan-out");
+  const b = await fan("demo", "ASK second fan-out", a.taskId);
+  await waitStatus(r, a, "blocked_on_input");
+  assert.equal((await status(r, b)).status, "queued", "per-agent cap queues the second demo");
+  const trigger = r.triggers.create({
+    kind: "event", agentId: "other", prompt: "ASK unattended probe",
+    workspace: { mode: "project" },
+  });
+  const fired = await r.triggers.fireEvent(trigger.id, "i2-event");
+  assert.equal(fired.outcome, "spawned");
+  const unattended = r.store.task(fired.taskId);
+  assert.equal(unattended.status, "queued", "trigger cannot consume the reserved final slot");
+  const c = await fan("other", "ASK third fan-out", a.taskId);
+  await waitStatus(r, c, "blocked_on_input");
+  assert.equal(r.active.size, 2, "interactive work uses the reserved slot across agents");
+  await assert.rejects(fan("other", "over budget"), /exhausted/);
+  const join = await r.call("spawn", {
+    agentId: "demo", prompt: "ASK join", labels: ["i2-join"],
+    parentTaskId: a.taskId, dependsOn: [a.taskId, b.taskId, c.taskId],
+    verify: check("setTimeout(() => {}, 300)"),
+  });
+  const downstream = await r.call("spawn", {
+    agentId: "other", prompt: "after verified join", dependsOn: [join.taskId],
+  });
+  assert.equal((await status(r, join)).queueReason, "waiting_on_dependency");
+  const finishedC = await release(r, c);
+  assert.equal(unattended.status, "queued", "reserve still applies with the other agent idle");
+  const finishedA = await release(r, a);
+  await waitStatus(r, b, "blocked_on_input");
+  assert.equal(unattended.status, "queued");
+  assert.equal((await status(r, join)).startedAt, undefined);
+  const finishedB = await release(r, b);
+  const runningJoin = await waitStatus(r, join, "blocked_on_input");
+  await waitStatus(r, unattended, "blocked_on_input");
+  for (const dependency of [finishedA, finishedB, finishedC])
+    assert.ok(runningJoin.startedAt >= dependency.finishedAt);
+  assert.ok(finishedB.startedAt >= finishedA.finishedAt);
+  assert.equal(runningJoin.parentTaskId, a.taskId);
+  const group = await r.call("wait", { label: "i2-fanout", timeoutMs: 1000 });
+  assert.equal(group.timedOut, false);
+  assert.equal(group.group.total, 3);
+  assert.equal(group.group.byStatus.completed, 3);
+  assert.equal(group.tasks.length, 3);
+  await release(r, unattended);
+  await release(r, join);
+  assert.equal((await status(r, join)).verification, "pending");
+  r.schedule();
+  assert.equal((await status(r, downstream)).status, "queued", "D11 gates the spare slot on verification");
+  await until(() => status(r, join), (value) => value.verification === "passed");
+  await waitStatus(r, downstream, "completed");
+  assert.equal(dispatches.length, 6);
+  for (const dispatch of dispatches) {
+    assert.ok(dispatch.dependenciesReady, `dependency gate at ${dispatch.taskId}`);
+    assert.ok(dispatch.agents.length <= 2, "global concurrency cap");
+    for (const agent of ["demo", "other"])
+      assert.ok(dispatch.agents.filter((id) => id === agent).length <= 1, `${agent} cap at ${dispatch.taskId}`);
+    if (dispatch.trigger) assert.ok(dispatch.before < 1, "trigger leaves an interactive slot");
+  }
+});

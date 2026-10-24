@@ -465,3 +465,66 @@ Refusing to restart: 1 nonterminal task(s) still active (task_54cf4852-01bb-4e2d
 ```
 
 </details>
+
+# I2
+
+Branch: `lab/integration`, starting at `9057ded`. Work stayed in the current integration worktree, without delegation or pushes. All three requested merges completed within the nine-minute limit.
+
+## Merge order and test gates
+
+| Order | Feature | `--no-ff` merge (two parents) | Immediate lab removal commit | Green post-merge coordinator suite |
+| --- | --- | --- | --- | --- |
+| 1 | `lab/lineage-labels` | `3043daf` | `af68db3` | 178/178 |
+| 2 | `lab/budget-pools` | `b23572b` | `823d91c` | 184/184 |
+| 3 | `lab/trigger-to-task` | `20ab36f` | `d26e67f` | 198/198 |
+
+Each merge was followed immediately by a commit removing the entire `lab/` directory with `git rm -r lab`. The lineage fixtures already used the system temporary directory. Budget fixtures moved to `.budget-pools-*` (`test/lab-budget-pools.test.mjs:40`); preference fixtures moved to `.budget-prefs-*` (`test/lab-budget-pools.test.mjs:255`). Trigger fixtures moved to `.trigger-test-*` (`test/lab-trigger-to-task.test.mjs:10`), all outside `lab/`.
+
+The first budget test gate was red (183/184): a second fixture prefix, `lab/.budget-prefs-*`, still required the removed parent. Commit `7e15d70` relocated it; the full gate then passed 184/184 before the trigger merge began. No later feature merge proceeded past a red suite.
+
+## Every textual conflict resolution
+
+References below use final I2 source line numbers.
+
+Lineage merge (`3043daf`), three conflict blocks:
+
+- `src/runtime.ts:134`: retain the full existing `inputsFrom` handoff schema and append `labels` and `parentTaskId` at lines 145–146. Existing dependency and verification schemas remain intact.
+- `src/runtime.ts:943`: retain `dependsOn` in each new task and also persist deduplicated labels and the parent task ID at lines 944–945.
+- `src/store.ts:71`: retain dependency IDs and add both lineage fields at lines 72–73. Persisted lineage validation at `src/store.ts:178`, self-parent rejection, and the passed/failed verification enum at `src/store.ts:174` all survive.
+
+Budget merge (`b23572b`), six conflict blocks:
+
+- `src/runtime.ts:111`: preserve `dependsOn` and append `budgetLabel` at line 118; verification, handoff and lineage inputs remain available together.
+- `src/runtime.ts:778`: keep atomic unknown-dependency rejection and then validate configured task-budget existence/exhaustion at line 781. Existing task-key retry lookup precedes both, so retries do not spend budget again.
+- `src/runtime.ts:943`: keep dependency and lineage task fields and append `budgetLabel` at line 946.
+- `src/runtime.ts:1226`: combine dependency readiness (including D11 verification) AND per-agent capacity at line 1227, while retaining conversation serialization and permission suppression at lines 1228–1229. Global capacity is checked at line 1208; no scheduling condition was replaced.
+- `src/store.ts:71`: keep dependencies, labels and parent IDs, and add `budgetLabel` at line 74.
+- `src/mcp.ts:75`: combine the verification tool description with the new global/per-agent concurrency description, preserving both public contracts.
+
+Trigger merge (`20ab36f`), one conflict block:
+
+- `src/runtime.ts:1209`: retain effective per-agent cap calculation and active count at line 1213; append the trigger interactive-slot reserve at line 1219. The reserve skips unattended tasks when only the final global slot remains, then the combined predicate at lines 1225–1229 enforces queued status, dependency readiness/D11, agent caps, conversation serialization and permission suppression. With global capacity one, trigger work stays queued.
+
+Automatic merges were reviewed too: `src/runtime.ts:932` persists `triggerId` beside all existing task metadata; `src/store.ts:58` and `src/store.ts:192` retain trigger identity and registry state alongside dependency/lineage/budget/verification state. The dependency failure sweep at `src/runtime.ts:1177` still propagates failed worker outcomes and failed verification even when all execution slots are occupied. `src/runtime.ts:298` still requires completed plus passed verification for verified dependencies, while unverified dependencies release on completion. Bounded label waits still cap returned tasks at ten (`src/runtime.ts:59`, `src/runtime.ts:333`) and count the entire group.
+
+Preference override and clamp behavior also remains: `src/effective-config.ts:266` prefers the workspace agent cap over its configured default; `src/config.ts:105` clamps the requested cap to global capacity and reports the requested/effective values. Existing budget tests cover preference override, global reductions, diagnostics, retained budgets and retry idempotence.
+
+## Cross-feature regression
+
+`test/lab-depends-on.test.mjs:319` adds one real mock-ACP regression combining:
+
+- Three labelled fan-out tasks across two agents, each capped at one, sharing a task budget of three; a fourth budgeted spawn is rejected.
+- Parent IDs on children and join, bounded label-group wait/counts, explicit task-start ordering, and cap observations at every dispatch (global two, per-agent one).
+- A real event trigger queued while its agent is idle because the final slot is reserved; interactive fan-out work bypasses it and uses that slot.
+- A join depending on all three fan-out tasks with an independent delayed verify spec, plus a downstream task proving that worker completion with pending verification cannot release dependencies into a spare slot.
+
+## Final validation
+
+Both final commands exited 0, including TypeScript builds and the complete suite on the final source and test code:
+
+| Command | Tests | Pass | Fail | Cancelled | Skipped | Todo | Duration (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `env -u AGENT_BRIDGE_WORKER npm test` | 199 | 199 | 0 | 0 | 0 | 0 | 21157.731084 |
+| `AGENT_BRIDGE_WORKER=1 npm test` | 199 | 199 | 0 | 0 | 0 | 0 | 20700.317167 |
+
+The I2 cross-feature regression passed in both modes (2102.720041 ms and 2108.215208 ms, respectively). `git diff --check` passed. Final source has no conflict markers and no `lab/` directory or tracked paths under it. All work is committed locally; nothing was pushed.
