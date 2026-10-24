@@ -67,6 +67,8 @@ export interface Task {
   summary: string;
   taskKey?: string;
   dependsOn?: string[];
+  labels?: string[];
+  parentTaskId?: string;
   description?: string;
   execution?: "foreground" | "background";
   acceptanceCriteria: string[];
@@ -167,8 +169,18 @@ const storedTask = z
     verification: z.enum(["pending", "passed", "failed"]),
     followups: z.array(z.string()),
     steeringCount: z.number().int().nonnegative(),
+    // lab(lineage-labels): persisted lineage fields must match the API shape.
+    labels: z
+      .array(z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,47}$/))
+      .max(8)
+      .optional(),
+    parentTaskId: z
+      .string()
+      .regex(/^task_[a-f0-9-]{36}$/)
+      .optional(),
   })
-  .passthrough();
+  .passthrough()
+  .refine((t) => t.parentTaskId !== t.taskId, "task cannot be its own parent");
 const storedState = z
   .object({
     version: z.literal(1),

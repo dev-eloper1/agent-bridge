@@ -54,6 +54,16 @@ import { startDashboard } from "./dashboard.js";
 import { buildId } from "./build-id.js";
 import { buildHandoffPrompt } from "./handoff.js";
 const taskId = z.string().regex(/^task_[a-f0-9-]{36}$/);
+// lab(lineage-labels): bounded, safe-charset group labels.
+const WAIT_LABEL_CAP = 10;
+const countTerminal = (byStatus: Record<string, number>) =>
+  Object.entries(byStatus).reduce(
+    (n, [k, v]) => n + (terminal(k as Status) ? v : 0),
+    0,
+  );
+const label = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9._:-]{0,47}$/, "label must match [a-z0-9][a-z0-9._:-]{0,47}");
 const message = z.string().min(1).max(16000);
 export const inputs = {
   list: z.object({}).strict(),
@@ -124,6 +134,8 @@ export const inputs = {
         )
         .max(4)
         .optional(),
+      labels: z.array(label).max(8).optional(),
+      parentTaskId: taskId.optional(),
     })
     .strict(),
   status: z.object({ taskId }).strict(),
@@ -145,6 +157,7 @@ export const inputs = {
     .object({
       afterCursor: z.number().int().min(0).default(0),
       limit: z.number().int().min(1).max(50).default(20),
+      label: label.optional(),
     })
     .strict(),
   result: z
@@ -163,7 +176,8 @@ export const inputs = {
   cancel: z.object({ taskId }).strict(),
   wait: z
     .object({
-      taskIds: z.array(taskId).min(1).max(10),
+      taskIds: z.array(taskId).min(1).max(10).optional(),
+      label: label.optional(),
       timeoutMs: z.number().int().min(0).max(8000).default(4000),
     })
     .strict(),
@@ -286,6 +300,33 @@ export class Runtime {
           : undefined,
     };
   }
+  // lab(lineage-labels): one pass over tasks; returns at most WAIT_LABEL_CAP
+  // tasks (still-open first, then blocked, then finished) plus group counts.
+  labelGroup(label: string) {
+    const open: Task[] = [];
+    const blocked: Task[] = [];
+    const done: Task[] = [];
+    const byStatus: Record<string, number> = {};
+    let total = 0;
+    for (const t of Object.values(this.store.state.tasks)) {
+      if (!t.labels?.includes(label)) continue;
+      total++;
+      byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
+      const bucket = terminal(t.status)
+        ? done
+        : t.status === "blocked_on_input"
+          ? blocked
+          : open;
+      if (bucket.length < WAIT_LABEL_CAP) bucket.push(t);
+    }
+    return {
+      total,
+      open:
+        total - (byStatus.blocked_on_input ?? 0) - countTerminal(byStatus),
+      byStatus,
+      tasks: [...open, ...blocked, ...done].slice(0, WAIT_LABEL_CAP),
+    };
+  }
   compact(t: Task) {
     const { acceptanceCriteria, ...rest } = t;
     return {
@@ -303,6 +344,8 @@ export class Runtime {
       workerName: t.workerName,
       description: t.description,
       execution: t.execution,
+      ...(t.labels ? { labels: t.labels } : {}),
+      ...(t.parentTaskId ? { parentTaskId: t.parentTaskId } : {}),
       status: t.status,
       question: t.question,
       activity: t.activity,
@@ -705,6 +748,7 @@ export class Runtime {
           ).length >= 100
         )
           throw Error("Queue limit reached");
+        if (a.parentTaskId) this.store.task(a.parentTaskId);
         if (a.agentSessionId && a.workspace)
           throw Error(
             "Use agentSessionId to continue a conversation, or workspace to select one; not both",
@@ -831,6 +875,8 @@ export class Runtime {
           summary: "Queued",
           taskKey: a.taskKey,
           dependsOn: a.dependsOn,
+          labels: a.labels?.length ? [...new Set<string>(a.labels)] : undefined,
+          parentTaskId: a.parentTaskId,
           description: this.sanitize(
             a.description ?? a.prompt.split("\n")[0],
           ).slice(0, 120),
@@ -882,19 +928,39 @@ export class Runtime {
       }
       case "wait": {
         const deadline = Date.now() + a.timeoutMs;
+        if (!a.taskIds === !a.label)
+          throw Error("Use exactly one of taskIds or label");
         while (true) {
-          const tasks = a.taskIds.map((id: string) => this.store.task(id));
-          if (
-            tasks.some(
-              (t: Task) =>
-                terminal(t.status) || t.status === "blocked_on_input",
-            ) ||
-            Date.now() >= deadline
-          )
-            return {
-              tasks: tasks.map((t: Task) => this.lean(t)),
-              timedOut: Date.now() >= deadline,
-            };
+          if (a.label) {
+            const group = this.labelGroup(a.label);
+            if (!group.total) throw Error("No tasks with this label");
+            const timedOut = Date.now() >= deadline;
+            if (group.open === 0 || timedOut)
+              return {
+                tasks: group.tasks.map((t) => this.lean(t)),
+                timedOut,
+                group: {
+                  label: a.label,
+                  total: group.total,
+                  returned: group.tasks.length,
+                  truncated: group.total > group.tasks.length,
+                  byStatus: group.byStatus,
+                },
+              };
+          } else {
+            const tasks = a.taskIds.map((id: string) => this.store.task(id));
+            if (
+              tasks.some(
+                (t: Task) =>
+                  terminal(t.status) || t.status === "blocked_on_input",
+              ) ||
+              Date.now() >= deadline
+            )
+              return {
+                tasks: tasks.map((t: Task) => this.lean(t)),
+                timedOut: Date.now() >= deadline,
+              };
+          }
           await new Promise((r) => setTimeout(r, 50));
         }
       }
@@ -919,8 +985,10 @@ export class Runtime {
       case "reply":
         return this.reply(a);
       case "events": {
+        const tasks = this.store.state.tasks;
         const events = this.store.state.events
           .filter((e) => e.cursor > a.afterCursor)
+          .filter((e) => !a.label || tasks[e.taskId]?.labels?.includes(a.label))
           .slice(0, a.limit);
         return {
           events,
