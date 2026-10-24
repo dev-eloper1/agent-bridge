@@ -97,6 +97,13 @@ export const inputs = {
       specialistSpec: specialistSpecDefinition.optional(),
       template: templateRef.optional(),
       taskKey: z.string().min(1).max(100).optional(),
+      dependsOn: z
+        .array(taskId)
+        .max(100)
+        .optional()
+        .describe(
+          "Existing task IDs that must all complete before this task runs; any unsuccessful dependency fails this task",
+        ),
       acceptanceCriteria: z.array(z.string().max(500)).max(20).default([]),
       verify: verifySpec.optional(),
       workspace: workspaceInput.optional(),
@@ -256,15 +263,22 @@ export class Runtime {
           r.task.status === "blocked_on_input" &&
           r.task.question?.kind === "permission",
       );
+    const waitingOnDependency =
+      t.status === "queued" &&
+      (t.dependsOn ?? []).some(
+        (id) => this.store.state.tasks[id]?.status !== "completed",
+      );
     const index = queued.findIndex((x) => x.taskId === t.taskId);
     return {
       queuePosition: index >= 0 ? index + 1 : undefined,
       queuedTasks: queued.length,
       activeTasks: this.active.size,
       concurrencyLimit: this.config.runtime.maxConcurrentTasks,
-      queueReason: suppressed
-        ? ("agent_waiting_for_permission" as const)
-        : undefined,
+      queueReason: waitingOnDependency
+        ? ("waiting_on_dependency" as const)
+        : suppressed
+          ? ("agent_waiting_for_permission" as const)
+          : undefined,
     };
   }
   compact(t: Task) {
@@ -677,6 +691,9 @@ export class Runtime {
           );
           if (previous) return this.compact(previous);
         }
+        for (const dependencyId of a.dependsOn ?? [])
+          if (!Object.hasOwn(this.store.state.tasks, dependencyId))
+            throw Error(`Unknown dependency: ${dependencyId}`);
         if (
           Object.values(this.store.state.tasks).filter(
             (t) => !terminal(t.status),
@@ -808,6 +825,7 @@ export class Runtime {
           createdAt: now(),
           summary: "Queued",
           taskKey: a.taskKey,
+          dependsOn: a.dependsOn,
           description: this.sanitize(
             a.description ?? a.prompt.split("\n")[0],
           ).slice(0, 120),
@@ -1013,6 +1031,24 @@ export class Runtime {
   }
   schedule() {
     if (this.closed) return;
+    // Spawn only accepts existing tasks, so insertion order is topological.
+    // Sweep failures even when every concurrency slot is occupied.
+    for (const t of Object.values(this.store.state.tasks)) {
+      if (t.status !== "queued") continue;
+      const failed = t.dependsOn?.find((id) => {
+        const dependency = this.store.state.tasks[id];
+        return (
+          !dependency ||
+          (terminal(dependency.status) && dependency.status !== "completed")
+        );
+      });
+      if (failed)
+        this.finish(
+          t,
+          "failed",
+          `Dependency ${failed} did not complete successfully (${this.store.state.tasks[failed]?.status ?? "missing"})`,
+        );
+    }
     const waitingPermission = new Set(
       [...this.active.values()]
         .filter(
@@ -1027,6 +1063,9 @@ export class Runtime {
       // Only turns within one conversation serialize; they share a native session.
       if (
         t.status === "queued" &&
+        (t.dependsOn ?? []).every(
+          (id) => this.store.state.tasks[id]?.status === "completed",
+        ) &&
         !this.active.has(t.agentSessionId) &&
         !waitingPermission.has(t.agentId)
       )
@@ -1094,6 +1133,7 @@ export class Runtime {
         ? "Worker finished; independent verification pending"
         : t.summary,
     );
+    setImmediate(() => this.schedule());
   }
   interrupt(r: Active) {
     r.verificationAbort?.abort();

@@ -66,6 +66,7 @@ export interface Task {
   finishedAt?: string;
   summary: string;
   taskKey?: string;
+  dependsOn?: string[];
   description?: string;
   execution?: "foreground" | "background";
   acceptanceCriteria: string[];
@@ -156,6 +157,10 @@ const storedTask = z
       "cancelled",
       "timed_out",
     ]),
+    dependsOn: z
+      .array(z.string().regex(/^task_[a-f0-9-]{36}$/))
+      .max(100)
+      .optional(),
     createdAt: z.string(),
     summary: z.string(),
     acceptanceCriteria: z.array(z.string()),
