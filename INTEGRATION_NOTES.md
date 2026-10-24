@@ -528,3 +528,48 @@ Both final commands exited 0, including TypeScript builds and the complete suite
 | `AGENT_BRIDGE_WORKER=1 npm test` | 199 | 199 | 0 | 0 | 0 | 0 | 20700.317167 |
 
 The I2 cross-feature regression passed in both modes (2102.720041 ms and 2108.215208 ms, respectively). `git diff --check` passed. Final source has no conflict markers and no `lab/` directory or tracked paths under it. All work is committed locally; nothing was pushed.
+
+# I3
+
+Branch: `lab/integration`, starting at `df7d5ac`. Merged `lab/worker-seatbelt` with `git merge --no-ff lab/worker-seatbelt -m "integrate: worker-seatbelt"` as `6c2ebe6` (parents `df7d5ac` and the worker-seatbelt branch tip). Immediate follow-up `656994a` removed all of `lab/` and relocated the seatbelt fixture prefix to `.sb-*` in this worktree (`test/lab-worker-seatbelt.test.mjs:24`). No other worktree was operated on, no live lab socket was contacted, and nothing was pushed. All requested work completed within eight minutes.
+
+## Conflicts and retained behavior
+
+There were four modify/delete documentation conflicts, resolved by accepting the feature versions for the merge and removing them in the immediate follow-up, consistent with the requested merge-then-remove sequence. Their file:line references are to merge commit `6c2ebe6`, since these files intentionally do not exist in the final tree:
+
+- `lab/DAG.md:1`: accepted the worker-seatbelt version for the merge, then removed in `656994a`.
+- `lab/LEDGER.md:1`: accepted the worker-seatbelt version for the merge, then removed in `656994a`.
+- `lab/PROCESS_JOURNAL.md:1`: accepted the worker-seatbelt version for the merge, then removed in `656994a`.
+- `lab/state.json:1`: accepted the worker-seatbelt version for the merge, then removed in `656994a`.
+
+There were no textual source conflicts. Reviewed automatic merges retain all previous behavior:
+
+- `src/config.ts:67`: `isolation` and `providerSandbox` coexist with `maxConcurrent` at line 70 in the strict agent schema. Seatbelt validation at line 88 remains alongside the global/per-agent cap helper at `src/config.ts:135`; preference override and scheduler capacity checks remain unchanged.
+- `src/acp.ts:82`: opt-in seatbelt rejects unsupported platforms or nested provider sandboxes; the generated profile wraps both worker guardian and provider at `src/acp.ts:93`, using canonical state/socket paths. Non-seatbelt workers keep the original launch behavior.
+- `src/runtime.ts:1463` and `src/worker-settings.ts:83`: both normal execution and settings probes pass the agent configuration into the worker, so isolation applies to both paths. The combined I2 scheduler predicate and D11 verification dependency gating remain intact.
+- `src/seatbelt.ts:4`: SBPL path quoting, canonical/alias state denial, relocated socket directories, both `/tmp` spellings, and rename-bypass defenses are retained. Tests create their own local servers and sockets; they never connect to the prohibited live lab socket.
+
+The existing runtime seatbelt regression now explicitly configures `maxConcurrent: 1` alongside `isolation: seatbelt` and `providerSandbox: none`, asserts all three survive schema parsing, and completes a real mock-ACP task (`test/lab-worker-seatbelt.test.mjs:243`). This supplements the retained I2 cross-feature scheduling test and existing cap/preference/clamp tests.
+
+## Final validation
+
+Both final commands exited 0, including the TypeScript build and all tests on the final source/test code. The initial post-removal coordinator gate also passed 208/208 before the combined-schema assertions were added.
+
+| Command | Tests | Pass | Fail | Cancelled | Skipped | Todo | Duration (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `env -u AGENT_BRIDGE_WORKER npm test` | 208 | 208 | 0 | 0 | 0 | 0 | 21896.06675 |
+| `AGENT_BRIDGE_WORKER=1 npm test` | 208 | 208 | 0 | 0 | 0 | 0 | 21390.3775 |
+
+Real macOS sandbox tests ran in both modes: state and alias reads, state writes, relocated socket connections, and socket/parent rename bypasses returned EPERM; fixture servers observed zero sandboxed connections. Workspace/HOME reads and wrapped mock ACP/runtime execution succeeded. The I2 cross-feature regression passed in both modes. `git diff --check` passed; `lab/` is absent and no tracked `lab/` paths remain. Work is committed locally, with no push.
+
+# Reviewer checklist
+
+- **hermetic-tests:** Temporary fixture configuration, state, homes and mock providers; restored environment; deterministic stderr-budget observation; both worker-marker modes pass without using live daemons or sockets.
+- **verify-verdict:** Strict coordinator-only verification input; literal argv without a shell; timeout/process-group termination, output bounds and environment allowlist; tamper detection; durable verdict/artifact separate from worker completion.
+- **handoff-inputs:** Known completed sources only; bounded source count, character limits and combined prompt; random collision-resistant provenance fences resist forged delimiters; Unicode truncation stays valid.
+- **depends-on:** Atomic ID validation; fan-out/join order; waiting consumes no execution slot or blocks unrelated work; cancellation/failure propagates transitively even at full capacity; persisted graphs resume correctly and explain queue reasons.
+- **D11:** Verified dependencies release only after a passed verdict; failed/tampered/error verification fails dependents; pending verification cannot use a spare dependent slot; tasks without verify retain release-on-completed behavior.
+- **lineage-labels:** Safe bounded labels, deduplication, valid existing parent IDs and persisted validation; lineage visible in results/status; event filtering; label waits count the whole group while returning at most ten tasks with open work first.
+- **budget-pools:** Global, per-agent, conversation and permission limits compose; omitted caps retain parallelism; preference overrides and global clamps report diagnostics; cross-agent task budgets count retained terminal tasks, survive reload, and preserve idempotent task-key retries.
+- **trigger-to-task:** Real timer/event tasks; explicit workspace and trusted trigger identity; durable registry, restart handling, overlap suppression, event dedupe, fire budgets and failure circuit breaker; unattended tasks preserve the final interactive slot, including at global capacity one.
+- **worker-seatbelt:** Opt-in macOS isolation and explicit provider sandbox disablement, Codex full-access requirement, incompatible worktree rejection; guardian/provider and probes wrapped; quoted canonical/alias state and relocated socket/parent protections cover rename bypasses and both tmp spellings; ordinary workspace/HOME access works; seatbelt fields coexist with agent caps.

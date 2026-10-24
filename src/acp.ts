@@ -11,6 +11,8 @@ import { Readable, Writable } from "node:stream";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
+import { realpathSync } from "node:fs";
+import { seatbeltProfile } from "./seatbelt.js";
 import { executablePath, resolveExecutable } from "./executables.js";
 import {
   normalizeSessionSettings,
@@ -50,6 +52,7 @@ export class Worker {
       exit: () => void;
       log: (s: string) => void;
     },
+    agent?: Config["agents"][string],
   ) {
     const p = c.providers[providerId];
     const env = allowlistedEnvironment(p.envNames);
@@ -76,13 +79,37 @@ export class Worker {
     );
     for (const [k, v] of Object.entries(p.env))
       if (k.endsWith("_STATE")) env[k] = path.resolve(c.root, v);
+    const isolated = agent?.isolation === "seatbelt";
+    if (
+      isolated &&
+      (process.platform !== "darwin" || agent.providerSandbox !== "none")
+    )
+      throw Error("seatbelt requires macOS and providerSandbox: none");
+    const hostArgs = [
+      fileURLToPath(new URL("./worker-host.js", import.meta.url)),
+      command,
+      ...args,
+    ];
+    const launchArgs = isolated
+      ? [
+          "-p",
+          seatbeltProfile({
+            stateDir: c.stateDir,
+            realStateDir: realpathSync(c.stateDir),
+            socket: c.socket,
+            realSocket: path.join(
+              realpathSync(path.dirname(c.socket)),
+              path.basename(c.socket),
+            ),
+          }),
+          process.execPath,
+          ...hostArgs,
+        ]
+      : hostArgs;
     this.child = spawn(
-      process.execPath,
-      [
-        fileURLToPath(new URL("./worker-host.js", import.meta.url)),
-        command,
-        ...args,
-      ],
+      isolated ? "/usr/bin/sandbox-exec" : process.execPath,
+      launchArgs,
+      /* guardian and provider inherit the same restrictions */
       { cwd, env, stdio: "pipe", detached: process.platform !== "win32" },
     );
     this.child.stdin.on("error", () => {});

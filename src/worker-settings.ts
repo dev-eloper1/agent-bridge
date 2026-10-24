@@ -80,7 +80,7 @@ export async function probeAgentSettings(
           : { outcome: { outcome: "cancelled" } },
       exit: () => {},
       log: () => {},
-    });
+    }, agent);
     const timeout = probeTimeout(options);
     const request = (async () => {
       await worker.initialize();

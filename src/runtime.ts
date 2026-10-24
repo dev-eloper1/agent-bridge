@@ -1460,7 +1460,7 @@ export class Runtime {
             active.reject(Error("Backend disconnected"));
           }
         },
-      });
+      }, a);
       w = worker;
       r.worker = w;
       this.workers.set(key, w);

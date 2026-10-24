@@ -64,6 +64,8 @@ export const schema = z
             )
             .refine((o) => Object.keys(o).length <= 20)
             .default({}),
+          isolation: z.enum(["none", "seatbelt"]).default("none"),
+          providerSandbox: z.enum(["none", "native"]).optional(),
           internal: z.boolean().default(false),
           maxConcurrent: z.number().int().min(1).max(16).optional(),
         })
@@ -83,6 +85,34 @@ export const schema = z
         });
     for (const [name, a] of Object.entries(c.agents)) {
       const p = c.providers[a.provider];
+      if (a.isolation === "seatbelt") {
+        if (process.platform !== "darwin")
+          ctx.addIssue({
+            code: "custom",
+            message: `${name}: seatbelt requires macOS`,
+          });
+        if (a.providerSandbox !== "none")
+          ctx.addIssue({
+            code: "custom",
+            message: `${name}: seatbelt cannot nest; explicitly set providerSandbox: none and disable the provider sandbox`,
+          });
+        // The pinned Codex ACP adapter defaults to a native sandboxed mode.
+        if (
+          p &&
+          /codex(?:-acp)?(?:\.exe)?$/.test(p.command) &&
+          a.sessionConfig.mode !== "agent-full-access"
+        )
+          ctx.addIssue({
+            code: "custom",
+            message: `${name}: seatbelt with Codex requires sessionConfig.mode: agent-full-access (no nested sandbox)`,
+          });
+        if (a.workspace === "isolated-worktree")
+          ctx.addIssue({
+            code: "custom",
+            message: `${name}: seatbelt cannot access worktrees inside stateDir; use workspace: project`,
+          });
+      }
+
       if (!p)
         ctx.addIssue({
           code: "custom",
