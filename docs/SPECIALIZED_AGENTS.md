@@ -80,13 +80,14 @@ Shipped locations for specializations:
 ```text
 .specialists/<namespace>/<id>/specialist.yaml             Project catalog
 ~/.specialists/<namespace>/<id>/specialist.yaml           Personal catalog
+<plugin root>/.specialists/<namespace>/<id>/specialist.yaml  Plugin catalog, shipped with Agent Bridge itself
 <configured root>/<namespace>/<id>/specialist.yaml        Named catalogs from agents.yaml `specialistCatalogs:`
 
 .agent-bridge/agents/<agent-id>/       Legacy project saved definitions (compatibility only)
 ~/.agent-bridge/agents/<agent-id>/     Legacy personal saved definitions (compatibility only)
 ```
 
-Specialist directories and the declared `namespace`/`id` must match. Unqualified `namespace/id` references resolve only when exactly one catalog contains the specialist; `catalog:namespace/id` addresses one catalog. One-off specializations also run inline as a `specialistSpec` with nothing persisted. Future bundle contents beyond `specialist.yaml` remain proposed, not shipped:
+Specialist directories and the declared `namespace`/`id` must match. Unqualified `namespace/id` references resolve only when exactly one catalog contains the specialist; `catalog:namespace/id` addresses one catalog. The `plugin` catalog is the `.specialists/` folder of the installed Agent Bridge plugin, located from the runtime's own module path (not `CLAUDE_PLUGIN_ROOT`), so roles the plugin or an app built on it ships are visible in every project. `project`, `global`, `plugin` and `inline` are reserved catalog names; catalogs that resolve to the same real folder, such as the project and plugin catalogs inside the Agent Bridge checkout, count once, under the earlier name (`project`). One-off specializations also run inline as a `specialistSpec` with nothing persisted. Future bundle contents beyond `specialist.yaml` remain proposed, not shipped:
 
 ```text
 Each bundle may later contain:

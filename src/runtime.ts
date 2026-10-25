@@ -589,11 +589,13 @@ export class Runtime {
           locations: {
             project: "<project>/.specialists/<namespace>/<id>/specialist.yaml",
             global: "~/.specialists/<namespace>/<id>/specialist.yaml",
+            plugin:
+              "<Agent Bridge plugin root>/.specialists/<namespace>/<id>/specialist.yaml, shipped with the plugin and available in every project",
             configured:
               "specialistCatalogs: { <name>: { path: <.specialists root> } } in agents.yaml; catalog.yaml is optional metadata only",
             inline:
               "a specialistSpec passed directly to specialists_validate or agents_run/agents_spawn for one-off use; nothing is written",
-            reservedNames: ["project", "global", "inline"],
+            reservedNames: ["project", "global", "plugin", "inline"],
           },
           availableCatalogs: Object.fromEntries(
             Object.entries(catalogRoots(this.config)).slice(0, 50),

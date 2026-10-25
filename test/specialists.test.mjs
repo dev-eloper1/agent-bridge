@@ -14,6 +14,7 @@ import path from "node:path";
 import { tmpdir, homedir } from "node:os";
 import {
   catalogRoots,
+  pluginRoot,
   resolveSpecialist,
   inlineSpecialist,
   listSpecialists,
@@ -102,7 +103,7 @@ test("catalog roots cover project, global and configured paths; reserved names f
   assert.equal(roots.global, path.join(homedir(), ".specialists"));
   assert.equal(roots.team, path.join(f.root, "team-catalog"));
   const raw = JSON.parse(readFileSync(f.file));
-  for (const reserved of ["project", "global", "inline"]) {
+  for (const reserved of ["project", "global", "plugin", "inline"]) {
     raw.specialistCatalogs = { [reserved]: { path: "x" } };
     assert.throws(() => schema.parse(raw), /reserved/, reserved);
   }
@@ -158,6 +159,81 @@ test("project and configured specialists resolve; ambiguity and path mismatch fa
   );
   assert.throws(() =>
     resolveSpecialist(f.config, "project:hivemind/../triage-investigator"),
+  );
+});
+test("plugin catalog defaults to the install root and resolves from any project", async () => {
+  const f = fixture({ team: { path: "team-catalog" } });
+  assert.equal(pluginRoot, path.resolve("./") + path.sep);
+  assert.equal(catalogRoots(f.config).plugin, path.resolve(".specialists"));
+  f.config.pluginRoot = path.join(f.root, "plugin-install");
+  assert.equal(
+    catalogRoots(f.config).plugin,
+    path.join(f.root, "plugin-install", ".specialists"),
+  );
+  persist(path.join(f.config.pluginRoot, ".specialists"), {
+    ...baseSpec,
+    namespace: "lab",
+    id: "queen",
+    instructions: "PLUGIN_INSTRUCTIONS",
+  });
+  const snapshot = resolveSpecialist(f.config, "lab/queen");
+  assert.equal(snapshot.catalog, "plugin");
+  assert.equal(snapshot.reference, "plugin:lab/queen");
+  assert.equal(snapshot.instructions, "PLUGIN_INSTRUCTIONS");
+  assert.equal(
+    resolveSpecialist(f.config, "plugin:lab/queen").digest,
+    snapshot.digest,
+  );
+  const runtime = new Runtime(f.config);
+  try {
+    const listed = await runtime.call("specialists_catalog", {});
+    const entry = listed.find((e) => e.reference === "plugin:lab/queen");
+    assert.equal(entry.catalog, "plugin");
+    assert.equal(entry.instructions, undefined);
+    const contract = await runtime.call("specialists_schema", {});
+    assert.ok(contract.locations.reservedNames.includes("plugin"));
+    assert.equal(
+      contract.availableCatalogs.plugin,
+      path.join(f.config.pluginRoot, ".specialists"),
+    );
+  } finally {
+    runtime.close();
+  }
+  persist(f.team, { ...baseSpec, namespace: "lab", id: "queen" });
+  assert.throws(
+    () => resolveSpecialist(f.config, "lab/queen"),
+    /plugin:lab\/queen or team:lab\/queen/,
+  );
+  assert.equal(
+    resolveSpecialist(f.config, "plugin:lab/queen").instructions,
+    "PLUGIN_INSTRUCTIONS",
+  );
+  assert.equal(
+    resolveSpecialist(f.config, "team:lab/queen").instructions,
+    "SPEC_INSTRUCTIONS",
+  );
+});
+test("a project that is the plugin checkout shares one catalog without ambiguity", () => {
+  const f = fixture();
+  f.config.pluginRoot = f.root;
+  project(f, { ...baseSpec, namespace: "lab", id: "queen" });
+  const snapshot = resolveSpecialist(f.config, "lab/queen");
+  assert.equal(snapshot.reference, "project:lab/queen");
+  assert.equal(resolveSpecialist(f.config, "plugin:lab/queen").catalog, "plugin");
+  const entries = listSpecialists(f.config).filter(
+    (e) => e.namespace === "lab" && e.id === "queen",
+  );
+  assert.deepEqual(
+    entries.map((e) => e.reference),
+    ["project:lab/queen"],
+  );
+  // A symlinked path to the same folder is still the same catalog.
+  const link = path.join(f.root, "linked-install");
+  symlinkSync(f.root, link);
+  f.config.pluginRoot = link;
+  assert.equal(
+    resolveSpecialist(f.config, "lab/queen").reference,
+    "project:lab/queen",
   );
 });
 test("redirected, oversized, malformed and unknown-field specialists fail closed without hiding valid entries", () => {

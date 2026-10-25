@@ -1,7 +1,8 @@
-import { existsSync, lstatSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { z } from "zod";
 import type { Config } from "./config.js";
@@ -35,10 +36,14 @@ export const specialistSnapshot = specialistSpecDefinition
   })
   .strict();
 export type SpecialistSnapshot = z.infer<typeof specialistSnapshot>;
+// The plugin root is derived from this module's own location (dist/..), like
+// bundledConfigFile; Node resolves symlinks for ESM URLs, so it is a real path.
+export const pluginRoot = fileURLToPath(new URL("../", import.meta.url));
 export function catalogRoots(config: Config): Record<string, string> {
   return {
     project: path.join(config.root, ".specialists"),
     global: path.join(homedir(), ".specialists"),
+    plugin: path.join(config.pluginRoot ?? pluginRoot, ".specialists"),
     ...Object.fromEntries(
       Object.entries(config.specialistCatalogs ?? {}).map(([name, c]) => [
         name,
@@ -46,6 +51,20 @@ export function catalogRoots(config: Config): Record<string, string> {
       ]),
     ),
   };
+}
+// Catalog names in order, skipping any whose folder (by real path) an earlier
+// catalog already covers, e.g. project and plugin in the Agent Bridge checkout.
+function distinctCatalogs(roots: Record<string, string>): string[] {
+  const seen = new Set<string>();
+  return Object.keys(roots).filter((catalog) => {
+    let real = path.resolve(roots[catalog]);
+    try {
+      real = realpathSync(real);
+    } catch {}
+    if (seen.has(real)) return false;
+    seen.add(real);
+    return true;
+  });
 }
 function specDigest(definition: z.infer<typeof specialistSpecDefinition>) {
   return createHash("sha256")
@@ -100,7 +119,7 @@ export function resolveSpecialist(
       })()
     );
   }
-  const matches = Object.keys(roots)
+  const matches = distinctCatalogs(roots)
     .map((catalog) => loadSpecialist(roots, catalog, namespace, id))
     .filter((m): m is SpecialistSnapshot => m !== undefined);
   if (matches.length > 1)
@@ -129,7 +148,7 @@ export function specialistMetadata(snapshot: SpecialistSnapshot) {
 export function listSpecialists(config: Config): unknown[] {
   const roots = catalogRoots(config);
   const specialists = [];
-  for (const catalog of Object.keys(roots)) {
+  for (const catalog of distinctCatalogs(roots)) {
     const root = roots[catalog];
     if (!existsSync(root)) continue;
     try {

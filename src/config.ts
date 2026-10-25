@@ -78,7 +78,12 @@ export const schema = z
   .strict()
   .superRefine((c, ctx) => {
     for (const name of Object.keys(c.specialistCatalogs))
-      if (name === "project" || name === "global" || name === "inline")
+      if (
+        name === "project" ||
+        name === "global" ||
+        name === "plugin" ||
+        name === "inline"
+      )
         ctx.addIssue({
           code: "custom",
           message: `${name} is a reserved specialist catalog name`,
@@ -131,6 +136,8 @@ export type Config = z.infer<typeof schema> & {
   socket: string;
   sourceFile: string;
   configDigest: string;
+  // Overrides the plugin catalog's root (normally this install); not read from agents.yaml.
+  pluginRoot?: string;
 };
 export function agentConcurrency(config: Config, agentId: string) {
   const requestedMaxConcurrent =
