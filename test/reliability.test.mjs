@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
+import { cliTestEnv } from "./helpers/cli-env.mjs";
 import { Runtime } from "../dist/runtime.js";
 import { loadConfig } from "../dist/config.js";
 import { remote } from "../dist/server.js";
@@ -440,7 +441,7 @@ test("doctor reports sanitized configuration without environment values", async 
 });
 test("plugin doctor reports reachability and restart refuses while work is active", async () => {
   const f = fixture();
-  const env = { ...process.env, AGENT_BRIDGE_CONFIG: f.file };
+  const env = cliTestEnv({ AGENT_BRIDGE_CONFIG: f.file });
   const cli = (...args) =>
     execFileSync(process.execPath, [path.join(root, "dist/cli.js"), ...args], {
       cwd: f.dir,
@@ -528,7 +529,7 @@ test("plugin doctor flags a live daemon that predates the doctor method", async 
         [path.join(root, "dist/cli.js"), "plugin-doctor"],
         {
           cwd: f.dir,
-          env: { ...process.env, AGENT_BRIDGE_CONFIG: f.file },
+          env: cliTestEnv({ AGENT_BRIDGE_CONFIG: f.file }),
           encoding: "utf8",
         },
       ),

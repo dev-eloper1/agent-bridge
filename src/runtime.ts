@@ -1,10 +1,15 @@
+import {
+  snapshotVerifyInputs,
+  changedVerifyInputs,
+} from "./verify-inputs.js";
+import { verifySpec, verifyCommand } from "./verify-verdict.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
-import type { Config } from "./config.js";
+import { agentConcurrency, type Config } from "./config.js";
 import {
   Store,
   uid,
@@ -46,8 +51,20 @@ import {
   validateSpecialistBinding,
 } from "./specialists.js";
 import { startDashboard } from "./dashboard.js";
+import { TriggerRegistry } from "./triggers.js";
 import { buildId } from "./build-id.js";
+import { buildHandoffPrompt } from "./handoff.js";
 const taskId = z.string().regex(/^task_[a-f0-9-]{36}$/);
+// bounded, safe-charset group labels.
+const WAIT_LABEL_CAP = 10;
+const countTerminal = (byStatus: Record<string, number>) =>
+  Object.entries(byStatus).reduce(
+    (n, [k, v]) => n + (terminal(k as Status) ? v : 0),
+    0,
+  );
+const label = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9._:-]{0,47}$/, "label must match [a-z0-9][a-z0-9._:-]{0,47}");
 const message = z.string().min(1).max(16000);
 export const inputs = {
   list: z.object({}).strict(),
@@ -91,7 +108,22 @@ export const inputs = {
       specialistSpec: specialistSpecDefinition.optional(),
       template: templateRef.optional(),
       taskKey: z.string().min(1).max(100).optional(),
+      dependsOn: z
+        .array(taskId)
+        .max(100)
+        .optional()
+        .describe(
+          "Existing task IDs that must all complete before this task runs; any unsuccessful dependency fails this task",
+        ),
+      budgetLabel: z
+        .string()
+        .regex(/^[a-zA-Z0-9_-]{1,64}$/)
+        .describe(
+          "Optional configured runtime.taskBudgets label. Counts accepted tasks across agents in retained runtime state, including terminal tasks; retries with the same taskKey do not spend again.",
+        )
+        .optional(),
       acceptanceCriteria: z.array(z.string().max(500)).max(20).default([]),
+      verify: verifySpec.optional(),
       workspace: workspaceInput.optional(),
       agentSessionId: z
         .string()
@@ -99,6 +131,19 @@ export const inputs = {
         .optional(),
       description: z.string().min(1).max(120).optional(),
       execution: z.enum(["foreground", "background"]).default("background"),
+      inputsFrom: z
+        .array(
+          z
+            .object({
+              taskId,
+              maxChars: z.number().int().min(1).max(12000).default(4000),
+            })
+            .strict(),
+        )
+        .max(4)
+        .optional(),
+      labels: z.array(label).max(8).optional(),
+      parentTaskId: taskId.optional(),
     })
     .strict(),
   status: z.object({ taskId }).strict(),
@@ -120,6 +165,7 @@ export const inputs = {
     .object({
       afterCursor: z.number().int().min(0).default(0),
       limit: z.number().int().min(1).max(50).default(20),
+      label: label.optional(),
     })
     .strict(),
   result: z
@@ -138,13 +184,15 @@ export const inputs = {
   cancel: z.object({ taskId }).strict(),
   wait: z
     .object({
-      taskIds: z.array(taskId).min(1).max(10),
+      taskIds: z.array(taskId).min(1).max(10).optional(),
+      label: label.optional(),
       timeoutMs: z.number().int().min(0).max(8000).default(4000),
     })
     .strict(),
 };
 type Method = keyof typeof inputs;
 interface Active {
+  verificationAbort?: AbortController;
   streaming: boolean;
   outputPrefix: string;
   task: Task;
@@ -174,8 +222,20 @@ export class Runtime {
   readonly startedAt = now();
   dashboardServer?: Awaited<ReturnType<typeof startDashboard>>;
   dashboardStarting?: Promise<Awaited<ReturnType<typeof startDashboard>>>;
-  constructor(readonly config: Config) {
+  readonly triggers: TriggerRegistry;
+  private triggerTimer?: NodeJS.Timeout;
+  constructor(
+    readonly config: Config,
+    clock: () => number = Date.now,
+  ) {
     this.store = new Store(config.stateDir, config.runtime.maxArtifactBytes);
+    this.triggers = new TriggerRegistry(
+      this.store,
+      config,
+      (args, triggerId) => this.call("spawn", args, triggerId),
+      clock,
+      () => this.closed,
+    );
     const sessions = Object.values(this.store.state.sessions);
     const reserved = new Set(
       sessions.flatMap((s) => (s.workerName ? [s.workerName] : [])),
@@ -194,17 +254,41 @@ export class Runtime {
       }
       for (const task of history) task.workerName = session.workerName;
     }
-    for (const t of Object.values(this.store.state.tasks))
+    for (const t of Object.values(this.store.state.tasks)) {
+      if (t.status === "completed" && t.verify && t.verification === "pending") {
+        t.verification = "failed";
+        t.verificationResult = {
+          exitCode: null,
+          signal: null,
+          reason: "restarted",
+          outputRef: `artifact://${t.taskId}/output.txt`,
+          outputTail: "Runtime restarted during verification; not replayed".slice(
+            -this.config.runtime.maxInlineChars,
+          ),
+        };
+        this.store.event(t, "verification.failed", "Verification failed: restarted");
+      }
       if (!terminal(t.status) && t.status !== "queued") {
         t.status = "failed";
         t.finishedAt = now();
         t.summary = "Runtime restarted during execution; not replayed";
         delete t.question;
+        this.triggers.taskFinished(t);
         this.store.event(t, "task.failed", t.summary);
       }
+    }
     this.store.save();
   }
   start() {
+    if (this.closed) throw Error("Runtime closed");
+    if (!this.triggerTimer) {
+      const tick = () => {
+        void this.triggers.tick();
+      };
+      tick();
+      this.triggerTimer = setInterval(tick, 250);
+      this.triggerTimer.unref();
+    }
     this.schedule();
   }
   sanitize(s: string) {
@@ -225,6 +309,13 @@ export class Runtime {
   append(t: Task, name: string, value: string) {
     this.store.append(t.taskId, name, this.sanitize(value));
   }
+  dependencyReady(id: string) {
+    const dependency = this.store.state.tasks[id];
+    return (
+      dependency?.status === "completed" &&
+      (!dependency.verify || dependency.verification === "passed")
+    );
+  }
   queue(t: Task) {
     const queued = Object.values(this.store.state.tasks).filter(
       (x) => x.status === "queued",
@@ -237,21 +328,54 @@ export class Runtime {
           r.task.status === "blocked_on_input" &&
           r.task.question?.kind === "permission",
       );
+    const waitingOnDependency =
+      t.status === "queued" &&
+      (t.dependsOn ?? []).some((id) => !this.dependencyReady(id));
     const index = queued.findIndex((x) => x.taskId === t.taskId);
     return {
       queuePosition: index >= 0 ? index + 1 : undefined,
       queuedTasks: queued.length,
       activeTasks: this.active.size,
       concurrencyLimit: this.config.runtime.maxConcurrentTasks,
-      queueReason: suppressed
-        ? ("agent_waiting_for_permission" as const)
-        : undefined,
+      queueReason: waitingOnDependency
+        ? ("waiting_on_dependency" as const)
+        : suppressed
+          ? ("agent_waiting_for_permission" as const)
+          : undefined,
+    };
+  }
+  // one pass over tasks; returns at most WAIT_LABEL_CAP
+  // tasks (still-open first, then blocked, then finished) plus group counts.
+  labelGroup(label: string) {
+    const open: Task[] = [];
+    const blocked: Task[] = [];
+    const done: Task[] = [];
+    const byStatus: Record<string, number> = {};
+    let total = 0;
+    for (const t of Object.values(this.store.state.tasks)) {
+      if (!t.labels?.includes(label)) continue;
+      total++;
+      byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
+      const bucket = terminal(t.status)
+        ? done
+        : t.status === "blocked_on_input"
+          ? blocked
+          : open;
+      if (bucket.length < WAIT_LABEL_CAP) bucket.push(t);
+    }
+    return {
+      total,
+      open:
+        total - (byStatus.blocked_on_input ?? 0) - countTerminal(byStatus),
+      byStatus,
+      tasks: [...open, ...blocked, ...done].slice(0, WAIT_LABEL_CAP),
     };
   }
   compact(t: Task) {
     const { acceptanceCriteria, ...rest } = t;
     return {
       ...rest,
+      agentConcurrency: agentConcurrency(this.config, t.agentId),
       acceptanceCriteriaCount: acceptanceCriteria.length,
       followups: t.followups.length,
       ...this.queue(t),
@@ -265,6 +389,8 @@ export class Runtime {
       workerName: t.workerName,
       description: t.description,
       execution: t.execution,
+      ...(t.labels ? { labels: t.labels } : {}),
+      ...(t.parentTaskId ? { parentTaskId: t.parentTaskId } : {}),
       status: t.status,
       question: t.question,
       activity: t.activity,
@@ -286,7 +412,11 @@ export class Runtime {
           : "project",
     };
   }
-  async call(method: string, raw: unknown): Promise<unknown> {
+  async call(
+    method: string,
+    raw: unknown,
+    triggerId?: string,
+  ): Promise<unknown> {
     if (!(method in inputs) || !Object.hasOwn(inputs, method))
       throw Error("Unknown method");
     const a: any = inputs[method as Method].parse(raw);
@@ -379,6 +509,7 @@ export class Runtime {
               id,
               {
                 provider: a.provider,
+                agentConcurrency: agentConcurrency(this.config, id),
                 workspace: a.workspace,
                 sessionConfig: a.sessionConfig,
               },
@@ -621,6 +752,11 @@ export class Runtime {
             };
           });
       case "spawn": {
+        // Defense in depth for direct in-process callers only: this is the
+        // daemon environment, not socket-caller identity. Worker-mode MCP
+        // exposes no tools; opt-in seatbelt denies access to the runtime socket.
+        if (a.verify && process.env.AGENT_BRIDGE_WORKER === "1")
+          throw Error("Only the coordinator may supply verify");
         const agent = this.config.agents[a.agentId];
         if (!agent) throw Error("Unknown agent");
         if (
@@ -636,12 +772,48 @@ export class Runtime {
           );
           if (previous) return this.compact(previous);
         }
+        // resolve handoff inputs before any session/task state is created.
+        const handoffPrompt = a.inputsFrom?.length
+          ? buildHandoffPrompt(
+              a.prompt,
+              a.inputsFrom.map((i: { taskId: string; maxChars: number }) => {
+                const src = this.store.state.tasks[i.taskId];
+                if (!src) throw Error(`inputsFrom: unknown task ${i.taskId}`);
+                if (!this.dependencyReady(i.taskId))
+                  throw Error(
+                    `inputsFrom: task ${i.taskId} is ${src.status}, not completed with passed verification`,
+                  );
+                return {
+                  taskId: i.taskId,
+                  status: src.status,
+                  text: this.store.readArtifactText(i.taskId, "output.txt"),
+                  maxChars: i.maxChars,
+                };
+              }),
+            )
+          : undefined;
+        for (const dependencyId of a.dependsOn ?? [])
+          if (!Object.hasOwn(this.store.state.tasks, dependencyId))
+            throw Error(`Unknown dependency: ${dependencyId}`);
+        if (a.budgetLabel) {
+          const budget = this.config.runtime.taskBudgets?.[a.budgetLabel];
+          if (!budget)
+            throw Error(`Unknown task budget label: ${a.budgetLabel}`);
+          const used = Object.values(this.store.state.tasks).filter(
+            (t) => t.budgetLabel === a.budgetLabel,
+          ).length;
+          if (used >= budget.maxTasks)
+            throw Error(
+              `Task budget ${a.budgetLabel} exhausted: maxTasks=${budget.maxTasks}`,
+            );
+        }
         if (
           Object.values(this.store.state.tasks).filter(
             (t) => !terminal(t.status),
           ).length >= 100
         )
           throw Error("Queue limit reached");
+        if (a.parentTaskId) this.store.task(a.parentTaskId);
         if (a.agentSessionId && a.workspace)
           throw Error(
             "Use agentSessionId to continue a conversation, or workspace to select one; not both",
@@ -664,14 +836,31 @@ export class Runtime {
           : undefined;
         if (a.agentSessionId && !s)
           throw Error("Unknown conversation for this worker");
-        const fingerprint = createHash("sha256")
-          .update(
-            JSON.stringify({
-              agent,
-              provider: this.config.providers[agent.provider],
-            }),
+        // Quota policy changes scheduling, not the durable provider session.
+        const { maxConcurrent: _maxConcurrent, ...sessionAgent } = agent;
+        const fingerprintFor = (sessionAgent: unknown) =>
+          createHash("sha256")
+            .update(
+              JSON.stringify({
+                agent: sessionAgent,
+                provider: this.config.providers[agent.provider],
+              }),
+            )
+            .digest("hex");
+        const fingerprint = fingerprintFor(sessionAgent);
+        const savedFingerprint = s?.fingerprint;
+        // Legacy versions stored caps in fingerprints. Recognize only those legacy
+        // hashes with identical session/provider settings and a valid old cap.
+        if (
+          s &&
+          s.fingerprint !== fingerprint &&
+          Array.from({ length: 16 }, (_, i) => i + 1).some(
+            (maxConcurrent) =>
+              savedFingerprint ===
+              fingerprintFor({ ...sessionAgent, maxConcurrent }),
           )
-          .digest("hex");
+        )
+          s.fingerprint = fingerprint;
         if (s && s.fingerprint !== fingerprint)
           throw Error(
             "Provider/workspace configuration changed for durable conversation; start a fresh conversation",
@@ -753,7 +942,11 @@ export class Runtime {
             },
           };
         }
+        const verifyInputs = a.verify
+          ? snapshotVerifyInputs(await this.workspace(s))
+          : undefined;
         const t: Task = {
+          triggerId,
           taskId: uid("task"),
           agentId: a.agentId,
           agentSessionId: s.agentSessionId,
@@ -764,6 +957,10 @@ export class Runtime {
           createdAt: now(),
           summary: "Queued",
           taskKey: a.taskKey,
+          dependsOn: a.dependsOn,
+          labels: a.labels?.length ? [...new Set<string>(a.labels)] : undefined,
+          parentTaskId: a.parentTaskId,
+          budgetLabel: a.budgetLabel,
           description: this.sanitize(
             a.description ?? a.prompt.split("\n")[0],
           ).slice(0, 120),
@@ -798,6 +995,8 @@ export class Runtime {
               }
             : undefined,
           verification: "pending",
+          verify: a.verify,
+          verifyInputs,
           followups: [],
           steeringCount: 0,
           sessionConfig: {
@@ -805,7 +1004,7 @@ export class Runtime {
             effective: {},
           },
         };
-        this.append(t, "prompt.txt", a.prompt);
+        this.append(t, "prompt.txt", handoffPrompt ?? a.prompt);
         this.store.state.tasks[t.taskId] = t;
         this.store.event(t, "task.queued", "Queued");
         setImmediate(() => this.schedule());
@@ -813,19 +1012,39 @@ export class Runtime {
       }
       case "wait": {
         const deadline = Date.now() + a.timeoutMs;
+        if (!a.taskIds === !a.label)
+          throw Error("Use exactly one of taskIds or label");
         while (true) {
-          const tasks = a.taskIds.map((id: string) => this.store.task(id));
-          if (
-            tasks.some(
-              (t: Task) =>
-                terminal(t.status) || t.status === "blocked_on_input",
-            ) ||
-            Date.now() >= deadline
-          )
-            return {
-              tasks: tasks.map((t: Task) => this.lean(t)),
-              timedOut: Date.now() >= deadline,
-            };
+          if (a.label) {
+            const group = this.labelGroup(a.label);
+            if (!group.total) throw Error("No tasks with this label");
+            const timedOut = Date.now() >= deadline;
+            if (group.open === 0 || timedOut)
+              return {
+                tasks: group.tasks.map((t) => this.lean(t)),
+                timedOut,
+                group: {
+                  label: a.label,
+                  total: group.total,
+                  returned: group.tasks.length,
+                  truncated: group.total > group.tasks.length,
+                  byStatus: group.byStatus,
+                },
+              };
+          } else {
+            const tasks = a.taskIds.map((id: string) => this.store.task(id));
+            if (
+              tasks.some(
+                (t: Task) =>
+                  terminal(t.status) || t.status === "blocked_on_input",
+              ) ||
+              Date.now() >= deadline
+            )
+              return {
+                tasks: tasks.map((t: Task) => this.lean(t)),
+                timedOut: Date.now() >= deadline,
+              };
+          }
           await new Promise((r) => setTimeout(r, 50));
         }
       }
@@ -850,8 +1069,10 @@ export class Runtime {
       case "reply":
         return this.reply(a);
       case "events": {
+        const tasks = this.store.state.tasks;
         const events = this.store.state.events
           .filter((e) => e.cursor > a.afterCursor)
+          .filter((e) => !a.label || tasks[e.taskId]?.labels?.includes(a.label))
           .slice(0, a.limit);
         return {
           events,
@@ -884,6 +1105,7 @@ export class Runtime {
             "stderr.txt",
             "diff.patch",
             "recovery.jsonl",
+            "verification.txt",
           ]
             .filter((n) => this.store.artifactSize(t.taskId, n) !== undefined)
             .map((n) => `artifact://${t.taskId}/${n}`),
@@ -966,6 +1188,30 @@ export class Runtime {
   }
   schedule() {
     if (this.closed) return;
+    // Spawn only accepts existing tasks, so insertion order is topological.
+    // Sweep failures even when every concurrency slot is occupied.
+    for (const t of Object.values(this.store.state.tasks)) {
+      if (t.status !== "queued") continue;
+      const failed = t.dependsOn?.find((id) => {
+        const dependency = this.store.state.tasks[id];
+        return (
+          !dependency ||
+          (terminal(dependency.status) && dependency.status !== "completed") ||
+          (dependency.verify && dependency.verification === "failed")
+        );
+      });
+      if (failed) {
+        const dependency = this.store.state.tasks[failed];
+        const verification = dependency?.verify
+          ? `; verification ${dependency.verification}: ${dependency.verificationResult?.reason ?? "pending"}`
+          : "";
+        this.finish(
+          t,
+          "failed",
+          `Dependency ${failed} did not complete successfully (${dependency?.status ?? "missing"}${verification})`,
+        );
+      }
+    }
     const waitingPermission = new Set(
       [...this.active.values()]
         .filter(
@@ -977,9 +1223,25 @@ export class Runtime {
     );
     for (const t of Object.values(this.store.state.tasks)) {
       if (this.active.size >= this.config.runtime.maxConcurrentTasks) break;
+      const agentLimit = agentConcurrency(
+        this.config,
+        t.agentId,
+      ).effectiveMaxConcurrent;
+      const agentActive = [...this.active.values()].filter(
+        (r) => r.task.agentId === t.agentId,
+      ).length;
+      // Unattended work may never consume the final slot reserved for interactive work.
+      // With a concurrency limit of one, trigger tasks remain queued.
+      if (
+        t.triggerId &&
+        this.active.size >= this.config.runtime.maxConcurrentTasks - 1
+      )
+        continue;
       // Only turns within one conversation serialize; they share a native session.
       if (
         t.status === "queued" &&
+        (t.dependsOn ?? []).every((id) => this.dependencyReady(id)) &&
+        agentActive < agentLimit &&
         !this.active.has(t.agentSessionId) &&
         !waitingPermission.has(t.agentId)
       )
@@ -1030,6 +1292,7 @@ export class Runtime {
       this.config.runtime.maxInlineChars,
     );
     t.finishedAt = now();
+    this.triggers.taskFinished(t);
     if (t.question) {
       const q = this.questions.get(t.question.questionId);
       q?.resolve(
@@ -1047,8 +1310,10 @@ export class Runtime {
         ? "Worker finished; independent verification pending"
         : t.summary,
     );
+    setImmediate(() => this.schedule());
   }
   interrupt(r: Active) {
+    r.verificationAbort?.abort();
     const s = this.session(r.task);
     if (r.worker && s.nativeSessionId) void r.worker.cancel(s.nativeSessionId);
     // Terminate immediately after sending best-effort cancel; do not reuse a possibly busy process.
@@ -1121,6 +1386,29 @@ export class Runtime {
     try {
       await Promise.race([this.execute(r), interrupted]);
     } catch (e) {
+      // Worker completion precedes verification. An exception after completion
+      // must settle the verdict so queued dependents cannot wait forever.
+      if (
+        this.store.task(t.taskId).status === "completed" &&
+        t.verify &&
+        t.verification === "pending"
+      ) {
+        t.verification = "failed";
+        t.verificationResult = {
+          exitCode: null,
+          signal: null,
+          reason: "error",
+          outputRef: `artifact://${t.taskId}/output.txt`,
+          outputTail: this.sanitize(String(e)).slice(
+            -this.config.runtime.maxInlineChars,
+          ),
+        };
+        this.store.event(
+          t,
+          "verification.failed",
+          `Verification failed: error (${t.verificationResult.outputTail})`,
+        );
+      }
       this.finish(t, "failed", e instanceof Error ? e.message : String(e));
       (r.worker ?? this.workers.get(t.agentSessionId))?.kill();
       this.workers.delete(t.agentSessionId);
@@ -1189,7 +1477,7 @@ export class Runtime {
             active.reject(Error("Backend disconnected"));
           }
         },
-      });
+      }, a);
       w = worker;
       r.worker = w;
       this.workers.set(key, w);
@@ -1313,6 +1601,59 @@ export class Runtime {
       );
     }
     this.finish(t, "completed", t.summary || "Completed; inspect artifacts");
+    if (t.verify) {
+      clearTimeout(r.timer); // Verification has its own timeout, separate from worker runtime.
+      r.verificationAbort = new AbortController();
+      verifyWorkspace(cwd, s.workspaceIdentity);
+      let inputsChanged = changedVerifyInputs(t.verifyInputs ?? {}, cwd);
+      const result =
+        inputsChanged.length && !t.verify.allowInputsChanged
+          ? {
+              passed: false,
+              output: Buffer.from(
+                "Verification inputs changed: " + inputsChanged.join(", "),
+              ),
+              exitCode: null,
+              signal: null,
+              reason: "tampered" as const,
+            }
+          : await verifyCommand(
+              t.verify,
+              cwd,
+              Math.min(8192, this.config.runtime.maxArtifactBytes),
+              r.verificationAbort.signal,
+            );
+      inputsChanged = [
+        ...new Set([
+          ...inputsChanged,
+          ...changedVerifyInputs(t.verifyInputs ?? {}, cwd),
+        ]),
+      ];
+      if (inputsChanged.length && !t.verify.allowInputsChanged) {
+        result.passed = false;
+        result.reason = "tampered";
+      }
+      const text = Buffer.from(
+        this.sanitize(result.output.toString("utf8")),
+      ).subarray(-Math.min(8192, this.config.runtime.maxArtifactBytes));
+      // Store accepts strings; decode without expanding malformed UTF-8 past the budget.
+      const output = text.toString("utf8").replace(/\uFFFD/g, "?");
+      this.append(t, "verification.txt", output);
+      t.verification = result.passed ? "passed" : "failed";
+      t.verificationResult = {
+        inputsChanged,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        reason: result.reason,
+        outputRef: `artifact://${t.taskId}/verification.txt`,
+        outputTail: output.slice(-this.config.runtime.maxInlineChars),
+      };
+      this.store.event(
+        t,
+        `verification.${t.verification}`,
+        `Verification ${t.verification}: ${result.reason}`,
+      );
+    }
   }
   update(key: string, value: any) {
     const r = this.active.get(key);
@@ -1503,6 +1844,7 @@ export class Runtime {
     });
   }
   close() {
+    clearInterval(this.triggerTimer);
     this.dashboardServer?.server.close();
     this.closed = true;
     for (const r of this.active.values()) {

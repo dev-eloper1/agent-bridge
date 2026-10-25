@@ -16,8 +16,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import type { VerifySpec, VerificationResult } from "./verify-verdict.js";
 import type { Workspace, WorkspaceIdentity } from "./workspaces.js";
 import { z } from "zod";
+import { storedTrigger, type Trigger } from "./triggers.js";
 import { templateSnapshot, type TemplateSnapshot } from "./templates.js";
 import { specialistSnapshot, type SpecialistSnapshot } from "./specialists.js";
 export const uid = (prefix: string) => `${prefix}_${randomUUID()}`;
@@ -53,6 +55,7 @@ export interface Session {
   sessionConfig?: SessionConfigState;
 }
 export interface Task {
+  triggerId?: string;
   taskId: string;
   agentId: string;
   agentSessionId: string;
@@ -65,10 +68,17 @@ export interface Task {
   finishedAt?: string;
   summary: string;
   taskKey?: string;
+  dependsOn?: string[];
+  labels?: string[];
+  parentTaskId?: string;
+  budgetLabel?: string;
   description?: string;
   execution?: "foreground" | "background";
   acceptanceCriteria: string[];
-  verification: "pending";
+  verification: "pending" | "passed" | "failed";
+  verify?: VerifySpec;
+  verifyInputs?: Record<string, string>;
+  verificationResult?: VerificationResult;
   template?: {
     id: string;
     name: string;
@@ -129,6 +139,8 @@ export interface Event {
   artifactRefs: string[];
 }
 interface State {
+  triggerBudget?: { fires: number[] };
+  triggers?: Record<string, Trigger>;
   version: 1;
   tasks: Record<string, Task>;
   sessions: Record<string, Session>;
@@ -152,17 +164,33 @@ const storedTask = z
       "cancelled",
       "timed_out",
     ]),
+    dependsOn: z
+      .array(z.string().regex(/^task_[a-f0-9-]{36}$/))
+      .max(100)
+      .optional(),
     createdAt: z.string(),
     summary: z.string(),
     acceptanceCriteria: z.array(z.string()),
-    verification: z.literal("pending"),
+    verification: z.enum(["pending", "passed", "failed"]),
     followups: z.array(z.string()),
     steeringCount: z.number().int().nonnegative(),
+    // persisted lineage fields must match the API shape.
+    labels: z
+      .array(z.string().regex(/^[a-z0-9][a-z0-9._:-]{0,47}$/))
+      .max(8)
+      .optional(),
+    parentTaskId: z
+      .string()
+      .regex(/^task_[a-f0-9-]{36}$/)
+      .optional(),
   })
-  .passthrough();
+  .passthrough()
+  .refine((t) => t.parentTaskId !== t.taskId, "task cannot be its own parent");
 const storedState = z
   .object({
     version: z.literal(1),
+    triggers: z.record(storedTrigger).optional(),
+    triggerBudget: z.object({ fires: z.array(z.number().finite()) }).optional(),
     tasks: z.record(storedTask),
     sessions: z.record(
       z

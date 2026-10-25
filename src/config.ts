@@ -28,6 +28,14 @@ export const schema = z
         stateDir: z.string().default(".agent-bridge"),
         workspaceRoot: z.string().optional(),
         maxConcurrentTasks: z.number().int().min(1).max(16).default(2),
+        taskBudgets: z
+          .record(
+            id,
+            z
+              .object({ maxTasks: z.number().int().min(1).max(1000000) })
+              .strict(),
+          )
+          .optional(),
         maxRuntimeMs: z.number().int().min(100).max(86400000).default(7200000),
         maxInlineChars: z.number().int().min(100).max(6000).default(2000),
         maxArtifactBytes: z
@@ -56,7 +64,10 @@ export const schema = z
             )
             .refine((o) => Object.keys(o).length <= 20)
             .default({}),
+          isolation: z.enum(["none", "seatbelt"]).default("none"),
+          providerSandbox: z.enum(["none", "native"]).optional(),
           internal: z.boolean().default(false),
+          maxConcurrent: z.number().int().min(1).max(16).optional(),
         })
         .strict(),
     ),
@@ -74,6 +85,34 @@ export const schema = z
         });
     for (const [name, a] of Object.entries(c.agents)) {
       const p = c.providers[a.provider];
+      if (a.isolation === "seatbelt") {
+        if (process.platform !== "darwin")
+          ctx.addIssue({
+            code: "custom",
+            message: `${name}: seatbelt requires macOS`,
+          });
+        if (a.providerSandbox !== "none")
+          ctx.addIssue({
+            code: "custom",
+            message: `${name}: seatbelt cannot nest; explicitly set providerSandbox: none and disable the provider sandbox`,
+          });
+        // The pinned Codex ACP adapter defaults to a native sandboxed mode.
+        if (
+          p &&
+          /codex(?:-acp)?(?:\.exe)?$/.test(p.command) &&
+          a.sessionConfig.mode !== "agent-full-access"
+        )
+          ctx.addIssue({
+            code: "custom",
+            message: `${name}: seatbelt with Codex requires sessionConfig.mode: agent-full-access (no nested sandbox)`,
+          });
+        if (a.workspace === "isolated-worktree")
+          ctx.addIssue({
+            code: "custom",
+            message: `${name}: seatbelt cannot access worktrees inside stateDir; use workspace: project`,
+          });
+      }
+
       if (!p)
         ctx.addIssue({
           code: "custom",
@@ -93,6 +132,19 @@ export type Config = z.infer<typeof schema> & {
   sourceFile: string;
   configDigest: string;
 };
+export function agentConcurrency(config: Config, agentId: string) {
+  const requestedMaxConcurrent =
+    config.agents[agentId]?.maxConcurrent ?? config.runtime.maxConcurrentTasks;
+  const effectiveMaxConcurrent = Math.min(
+    requestedMaxConcurrent,
+    config.runtime.maxConcurrentTasks,
+  );
+  return {
+    requestedMaxConcurrent,
+    effectiveMaxConcurrent,
+    clamped: effectiveMaxConcurrent < requestedMaxConcurrent,
+  };
+}
 export function loadConfig(file = "agents.yaml"): Config {
   const sourceFile = realpathSync(path.resolve(file));
   const base = path.dirname(sourceFile);
