@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
@@ -52,19 +52,36 @@ export function catalogRoots(config: Config): Record<string, string> {
     ),
   };
 }
-// Catalog names in order, skipping any whose folder (by real path) an earlier
-// catalog already covers, e.g. project and plugin in the Agent Bridge checkout.
+// Catalog names in order, skipping any whose folder an earlier catalog already
+// covers, e.g. project and plugin in the Agent Bridge checkout. Folders compare
+// by device and inode, so letter case and symlinks don't matter; an unsafe
+// catalog never claims a folder, so it cannot hide a usable alias of it.
 function distinctCatalogs(roots: Record<string, string>): string[] {
-  const seen = new Set<string>();
-  return Object.keys(roots).filter((catalog) => {
-    let real = path.resolve(roots[catalog]);
+  const catalogs = Object.keys(roots).map((catalog) => {
+    let identity: string | undefined;
+    let safe = true;
     try {
-      real = realpathSync(real);
-    } catch {}
-    if (seen.has(real)) return false;
-    seen.add(real);
-    return true;
+      const stat = statSync(roots[catalog]);
+      identity = `${stat.dev}:${stat.ino}`;
+      checkDirectories(roots[catalog]);
+    } catch {
+      safe = false;
+    }
+    return { catalog, identity, safe };
   });
+  const usable = new Set(
+    catalogs.filter((c) => c.safe && c.identity).map((c) => c.identity),
+  );
+  const seen = new Set<string>();
+  return catalogs
+    .filter(({ identity, safe }) => {
+      if (!identity) return true;
+      if (!safe) return !usable.has(identity);
+      if (seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    })
+    .map((c) => c.catalog);
 }
 function specDigest(definition: z.infer<typeof specialistSpecDefinition>) {
   return createHash("sha256")

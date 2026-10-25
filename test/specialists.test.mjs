@@ -236,6 +236,45 @@ test("a project that is the plugin checkout shares one catalog without ambiguity
     "project:lab/queen",
   );
 });
+test("catalog folders that differ only in letter case count once", (t) => {
+  const f = fixture();
+  const base = path.basename(f.root);
+  const recased = path.join(path.dirname(f.root), base.toUpperCase());
+  if (!existsSync(recased)) return t.skip("case-sensitive filesystem");
+  f.config.pluginRoot = recased;
+  project(f, { ...baseSpec, namespace: "lab", id: "queen" });
+  assert.equal(
+    resolveSpecialist(f.config, "lab/queen").reference,
+    "project:lab/queen",
+  );
+  assert.deepEqual(
+    listSpecialists(f.config)
+      .filter((e) => e.namespace === "lab" && e.id === "queen")
+      .map((e) => e.reference),
+    ["project:lab/queen"],
+  );
+});
+test("an unsafe alias never hides the usable plugin catalog it points to", () => {
+  const f = fixture();
+  f.config.pluginRoot = path.join(f.root, "plugin-install");
+  const pluginCatalog = path.join(f.config.pluginRoot, ".specialists");
+  persist(pluginCatalog, { ...baseSpec, namespace: "lab", id: "queen" });
+  symlinkSync(pluginCatalog, path.join(f.root, ".specialists"));
+  assert.equal(
+    resolveSpecialist(f.config, "lab/queen").reference,
+    "plugin:lab/queen",
+  );
+  assert.deepEqual(
+    listSpecialists(f.config)
+      .filter((e) => e.namespace === "lab" && e.id === "queen")
+      .map((e) => e.reference),
+    ["plugin:lab/queen"],
+  );
+  assert.throws(
+    () => resolveSpecialist(f.config, "project:lab/queen"),
+    /Unsafe/,
+  );
+});
 test("redirected, oversized, malformed and unknown-field specialists fail closed without hiding valid entries", () => {
   const f = fixture();
   project(f, baseSpec);

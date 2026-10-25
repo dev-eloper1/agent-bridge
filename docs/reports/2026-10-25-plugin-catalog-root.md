@@ -19,7 +19,7 @@ flowchart LR
 
 | File | Change |
 | --- | --- |
-| `src/specialists.ts` | New `plugin` catalog at `<plugin root>/.specialists`. The plugin root comes from the module's own location (`dist/..`), the same way `effective-config.ts` finds the bundled `agents.yaml`. A new `distinctCatalogs` helper skips any catalog whose real folder an earlier catalog already covers. Both unqualified resolution and the listing use it. |
+| `src/specialists.ts` | New `plugin` catalog at `<plugin root>/.specialists`. The plugin root comes from the module's own location (`dist/..`), the same way `effective-config.ts` finds the bundled `agents.yaml`. A new `distinctCatalogs` helper skips any catalog whose folder an earlier catalog already covers. Folders are compared by device and inode, not by path text, so letter case and symlinks don't create false duplicates. A catalog that fails the safety checks never claims a folder, so it can't hide a usable catalog that points to the same place. Both unqualified resolution and the listing use it. |
 | `src/config.ts` | `plugin` is reserved alongside `project`, `global` and `inline`. `Config` gains an optional `pluginRoot` override. It is not read from `agents.yaml`, and tests use it to point the plugin catalog at a fixture folder. |
 | `src/runtime.ts` | `specialists_schema` describes the plugin location and lists `plugin` among the reserved names. `availableCatalogs` shows the plugin catalog's real path. |
 | `test/specialists.test.mjs` | Two new tests; the reserved-name loop now includes `plugin`. |
@@ -32,12 +32,15 @@ flowchart LR
 
 ## How it was tested
 
-`npm test` (build plus the full suite), run in this worktree: **213 tests, 213 pass, 0 fail**. The baseline was 211; the 2 new tests account for the difference.
+`npm test` (build plus the full suite), run in this worktree after the repair round: **215 tests, 215 pass, 0 fail, 0 skipped**. The baseline was 211; the 4 new tests account for the difference.
 
 New coverage:
 - **Plugin-catalog resolution.** By default the plugin catalog is the install root's `.specialists`. With the root pointed at a fixture install, `lab/queen` resolves from an unrelated project as `plugin:lab/queen`. `specialists_catalog` lists it with `catalog: "plugin"` and no instructions. `specialists_schema` reports it and reserves the name.
 - **Ambiguity.** The same `lab/queen` in the plugin catalog and a `team` catalog fails with "use plugin:lab/queen or team:lab/queen". Both qualified forms resolve to the right content.
 - **Same-folder deduplication.** With the plugin root equal to the project root, `lab/queen` resolves without ambiguity as `project:lab/queen`, and the listing shows it once. `plugin:lab/queen` still resolves when asked for explicitly. A symlinked path to the same folder also counts as one catalog.
+- **Letter case (repair round).** On a case-insensitive filesystem, a plugin root that differs from the project root only in letter case counts as the same catalog. `lab/queen` resolves as `project:lab/queen` and is listed once. On a case-sensitive filesystem this test skips itself; on this Mac it ran.
+- **Unsafe alias (repair round).** With `<project>/.specialists` as a symlink to the plugin's `.specialists`, `lab/queen` resolves as `plugin:lab/queen` and the listing shows it. `project:lab/queen` still fails the safety check.
+- **The fix is what makes these tests pass.** I put the previous commit's `src/specialists.ts` back, rebuilt and ran `node --test test/specialists.test.mjs`: 14 passed and exactly these 2 failed. Then I restored the fix.
 - **Reserved name.** `specialistCatalogs: { plugin: … }` is rejected by the schema.
 
 ## Choices I made
@@ -48,6 +51,9 @@ New coverage:
 - **The test override is an optional `Config.pluginRoot` field,** not an environment variable. That way users and workers get no new runtime setting that could redirect the catalog.
 
 ## Risks and what is left
+
+- **Identity is based on device and inode.** This is reliable on local filesystems. Some network or FUSE filesystems report unstable inode numbers. There, two catalogs for the same folder could still look different, which shows up as a visible ambiguity error rather than a silent wrong match.
+- **An unsafe catalog with no safe alias still fails as before.** For example, a symlinked project catalog that points somewhere no other catalog covers still breaks unqualified resolution in that project. That is the existing fail-closed behaviour, deliberately left unchanged.
 
 - Specialists in the plugin catalog sit in the plugin's install folder. A plugin update replaces them, so that folder is meant for roles the plugin ships, not user edits. The docs say "shipped with the plugin"; the `specialize` skill does not yet steer saves away from it.
 - If a user's project or global catalog has the same `namespace/id` as a plugin role, unqualified references become ambiguous and the user must qualify them. This follows the existing rule and is deliberate, but it means adding plugin roles can make previously unique names ambiguous for some users.
