@@ -7,6 +7,7 @@ import {
   readFileSync,
   existsSync,
   realpathSync,
+  statSync,
 } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -63,6 +64,20 @@ test("Claude plugin autostarts one project daemon, reconnects to persistent task
     assert.ok(listed.some((tool) => tool.name === "agents_decision_open"));
     for (const tool of listed)
       assert.doesNotMatch(tool.name, /decide|resolve|withdraw|expire/);
+    // The Mod pane gets the daemon's /human token from bootstrap.
+    const bootEnv = cliTestEnv();
+    delete bootEnv.AGENT_BRIDGE_CONFIG;
+    const boot = JSON.parse(
+      execFileSync(process.execPath, [path.join(root, "dist/cli.js"), "plugin-bootstrap"], {
+        cwd: dir,
+        env: bootEnv,
+        encoding: "utf8",
+      }),
+    );
+    const tokenFile = path.join(dir, ".agent-bridge/pane-token");
+    assert.match(boot.paneToken, /^[a-f0-9]{64}$/);
+    assert.equal(boot.paneToken, readFileSync(tokenFile, "utf8"));
+    assert.equal(statSync(tokenFile).mode & 0o777, 0o600);
     const first = await tool(one, "agents_spawn", {
       agentId: "demo",
       prompt: "remember plugin marker",

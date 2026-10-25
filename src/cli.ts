@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { loadConfig } from "./config.js";
-import { serve, remote } from "./server.js";
+import { serve, remote, readPaneToken } from "./server.js";
 import { mcp } from "./mcp.js";
 import { initializeProject } from "./project-config.js";
 import { fileURLToPath } from "node:url";
@@ -51,6 +51,8 @@ try {
       JSON.stringify({
         configFile: context.file,
         socket: context.config.socket,
+        // For the Mod pane's /human calls; see readPaneToken.
+        paneToken: readPaneToken(context.config),
         workspace: context.config.root,
       }),
     );

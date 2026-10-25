@@ -8,6 +8,7 @@ import {
   existsSync,
 } from "node:fs";
 import path from "node:path";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import { Runtime } from "./runtime.js";
 import { streamEvents } from "./event-stream.js";
@@ -41,6 +42,9 @@ export async function serve(config: Config) {
     rmSync(lock, { recursive: true });
     throw e;
   }
+  // Raises the bar for /human: callers must read this 0600 file. Any process
+  // running as the same user (including a model's shell) still can.
+  const paneToken = readPaneToken(config) ?? createPaneToken(config);
   const watchers = new Set<http.ServerResponse>();
   const server = http.createServer(async (req, res) => {
     try {
@@ -66,6 +70,13 @@ export async function serve(config: Config) {
       // Resolve or withdraw a decision. Only the Mod pane calls this route;
       // MCP tools go through /call and cannot reach it.
       if (human) {
+        const supplied = Buffer.from(String(req.headers[PANE_TOKEN_HEADER] ?? ""));
+        const expected = Buffer.from(paneToken);
+        if (
+          supplied.length !== expected.length ||
+          !timingSafeEqual(supplied, expected)
+        )
+          throw Error("Missing or wrong pane token");
         const result = runtime.human(JSON.parse(body));
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ result }));
@@ -131,6 +142,21 @@ export async function serve(config: Config) {
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
   return { runtime, server, stop };
+}
+export const PANE_TOKEN_HEADER = "x-agent-bridge-pane-token";
+const paneTokenFile = (config: Config) =>
+  path.join(config.stateDir, "pane-token");
+export function readPaneToken(config: Config) {
+  const file = paneTokenFile(config);
+  if (!existsSync(file)) return undefined;
+  const token = readFileSync(file, "utf8").trim();
+  return /^[a-f0-9]{64}$/.test(token) ? token : undefined;
+}
+function createPaneToken(config: Config) {
+  const token = randomBytes(32).toString("hex");
+  writeFileSync(paneTokenFile(config), token, { mode: 0o600 });
+  chmodSync(paneTokenFile(config), 0o600);
+  return token;
 }
 export function remote(
   config: Config,

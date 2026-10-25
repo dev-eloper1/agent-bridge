@@ -218,7 +218,10 @@ function setup(on) {
     return {
       value: {
         exitCode: 0,
-        stdout: JSON.stringify({ socket: "/tmp/test-bridge.sock" }),
+        stdout: JSON.stringify({
+          socket: "/tmp/test-bridge.sock",
+          paneToken: "pane-token-fixture",
+        }),
         stderr: "",
       },
     };
@@ -272,7 +275,11 @@ function setup(on) {
       result = { decisions: decisions.filter((d) => d.status === "open") };
     // Only the /human route carries an action; /call carries a method.
     if (request.action) {
-      humanCalls.push({ url: e.url, ...request });
+      humanCalls.push({
+        url: e.url,
+        token: (e.headers ?? e.init?.headers)?.["x-agent-bridge-pane-token"],
+        ...request,
+      });
       const decision = decisions.find((d) => d.decisionId === request.decisionId);
       decision.status = request.action === "decide" ? "resolved" : "withdrawn";
       if (request.action === "decide")
@@ -281,7 +288,7 @@ function setup(on) {
             ? decision.options[Number(request.option) - 1]?.label ?? request.option
             : undefined,
           text: request.text,
-          surface: request.surface,
+          claimedSurface: request.surface,
         };
       result = decision;
     }
@@ -2216,7 +2223,10 @@ test("open decisions show first with numbered options and trade-offs; a button r
   await $.command.run({ command: "workers", args: "" });
   const pane = await mountInspector($);
   const text = await paneAllText(pane);
-  expect(text).toContain("INPUT REQUIRED · decisions only you can make");
+  expect(text).toContain("INPUT REQUIRED · decisions for you");
+  expect(text).toContain(
+    "No model tool can resolve these; the answer route is reachable by local processes running as you.",
+  );
   expect(text).toContain("00000001 · Which store should the runtime use?");
   const first = await pane.find({
     type: "Button",
@@ -2232,11 +2242,12 @@ test("open decisions show first with numbered options and trade-offs; a button r
     decisionId: decision.decisionId,
     option: "2",
     surface: "mod-button",
+    token: "pane-token-fixture",
   });
   expect(env.requests.some((r) => r.method && /decide|resolve|withdraw/.test(r.method))).toBe(false);
   await pane.unmount();
   const after = await mountInspector($);
-  expect(await paneAllText(after)).not.toContain("decisions only you can make");
+  expect(await paneAllText(after)).not.toContain("decisions for you");
   await after.unmount();
 });
 

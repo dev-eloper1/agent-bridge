@@ -1,5 +1,5 @@
 // Claude Mod UI and notifications. Task execution stays in the daemon.
-let socket, key, timer;
+let socket, paneToken, key, timer;
 let state = { cursor: 0, owned: [], pending: [], handled: [], modes: {} };
 let tasks = {},
   roster = [],
@@ -306,7 +306,10 @@ async function settleDecision($, decisionId, payload, surface) {
     const response = await $.http.fetch("http://agent-bridge/human", {
       method: "POST",
       socketPath: socket,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-agent-bridge-pane-token": paneToken ?? "",
+      },
       body: JSON.stringify({ ...payload, decisionId, surface }),
     });
     const body = JSON.parse(response.text);
@@ -856,6 +859,7 @@ export function register(on) {
     inFlight = {};
     outputPage = undefined;
     socket = undefined;
+    paneToken = undefined;
     interactive = e.isInteractive;
     workspaceCwd = e.cwd;
     settingsData = undefined;
@@ -902,7 +906,7 @@ export function register(on) {
       );
       if (boot.exitCode !== 0)
         throw Error(boot.stderr || "Worker runtime did not start");
-      socket = JSON.parse(boot.stdout).socket;
+      ({ socket, paneToken } = JSON.parse(boot.stdout));
       await refresh($, false);
       startTimer($);
     } catch (error) {
@@ -1127,10 +1131,14 @@ export function register(on) {
               paddingX: 1,
             },
             children: [
-              text("INPUT REQUIRED · decisions only you can make", {
+              text("INPUT REQUIRED · decisions for you", {
                 color: "yellow",
                 bold: true,
               }),
+              text(
+                "No model tool can resolve these; the answer route is reachable by local processes running as you.",
+                { dimColor: true, wrap: "wrap" },
+              ),
               ...decisions.flatMap((d) => [
                 text(`${shortDecisionId(d)} · ${plain(d.question, 500)}`, {
                   bold: true,

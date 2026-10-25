@@ -187,6 +187,7 @@ export interface Decision {
   question: string;
   options: { label: string; tradeoff: string }[];
   allowFreeText: boolean;
+  maxFreeTextChars?: number;
   status: DecisionStatus;
   openedBy: string;
   createdAt: string;
@@ -194,7 +195,9 @@ export interface Decision {
   resolution?: {
     option?: string;
     text?: string;
-    surface: string;
+    // Who the caller said it was. Not proof that a person answered: any
+    // local process running as the owner can reach the human route.
+    claimedSurface: string;
     at: string;
   };
 }
