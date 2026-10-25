@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import { mkdtempSync, writeFileSync, rmSync, statSync, existsSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { serve } from "../dist/server.js";
+import { remote, serve } from "../dist/server.js";
 import { Runtime } from "../dist/runtime.js";
 import { loadConfig } from "../dist/config.js";
 import { Store, eventKind } from "../dist/store.js";
@@ -67,6 +67,12 @@ test("private socket replays, delivers live, and reconnects without gaps or dupl
   const task = { taskId: "example", agentId: "one" };
   store.event(task, "task.queued", "queued");
   store.event(task, "task.started", "started");
+  // Simulate a pre-PR-3 record: no stored kind.
+  delete store.state.events[0].kind;
+  store.save();
+  const replay = await remote(config, "events", {});
+  assert.deepEqual(replay.events.map((event) => event.kind), ["task.queued", "task.started"]);
+  assert.equal(store.state.events[0].kind, undefined, "read must not rewrite history");
   const first = await connect(config, 1);
   clients.push(first);
   assert.equal(first.res.headers["content-type"], "application/x-ndjson");
@@ -103,17 +109,20 @@ test("stalled watcher is dropped with a bounded buffer and its subscription remo
     destroy() { this.destroyed = true; this.emit("close"); }
   }
   const res = new SlowResponse();
+  assert.equal(store.listenerCount, 0);
   streamEvents(store, res, 0);
+  assert.equal(store.listenerCount, 1);
   for (let i = 0; i < 20; i++)
     store.event({ taskId: "example", agentId: "one" }, "task.progress", "progress");
   assert.equal(res.writes, 1);
   await until(() => res.destroyed);
+  assert.equal(store.listenerCount, 0);
   store.save();
   assert.equal(res.writes, 1);
   assert.equal(res.listenerCount("drain"), 0);
 });
 
-test("wait wakes on needs-input and started changes, with the compatible shape", async (t) => {
+test("wait ignores started and wakes early on needs-input, with the compatible shape", async (t) => {
   const config = fixture(t);
   const r = new Runtime(config);
   t.after(async () => { await r.close(); rmSync(config.root, { recursive: true, force: true }); });
@@ -130,10 +139,52 @@ test("wait wakes on needs-input and started changes, with the compatible shape",
   assert.equal(result.group.label, "watch");
   current.status = "queued";
   r.store.save();
-  const started = r.call("wait", { taskIds: [task.taskId], timeoutMs: 8000 });
+  let returned = false;
+  const waitingForInput = r.call("wait", { taskIds: [task.taskId], timeoutMs: 8000 })
+    .then((result) => { returned = true; return result; });
   current.status = "running";
   r.store.event(current, "task.started", "started");
-  assert.equal((await started).tasks[0].status, "running");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(returned, false, "started must not settle wait");
+  current.status = "blocked_on_input";
+  r.store.event(current, "task.blocked", "permission", true);
+  const needsInput = await waitingForInput;
+  assert.equal(needsInput.timedOut, false);
+  assert.equal(needsInput.tasks[0].status, "blocked_on_input");
+});
+
+test("one label wait settles six tasks despite intermediate starts and completions", async (t) => {
+  const config = fixture(t);
+  const r = new Runtime(config);
+  r.schedule = () => {};
+  t.after(async () => { await r.close(); rmSync(config.root, { recursive: true, force: true }); });
+  const tasks = [];
+  for (let i = 0; i < 6; i++) {
+    const task = await r.call("spawn", { agentId: "one", prompt: "hello", labels: ["batch"] });
+    tasks.push(r.store.task(task.taskId));
+  }
+  let returned = false;
+  const waiting = r.call("wait", { label: "batch", timeoutMs: 8000 })
+    .then((result) => { returned = true; return result; });
+  for (const task of tasks) {
+    task.status = "running";
+    r.store.event(task, "task.started", "started");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(returned, false);
+  }
+  for (const task of tasks.slice(0, -1)) {
+    task.status = "completed";
+    r.store.event(task, "task.completed", "done");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(returned, false);
+  }
+  tasks.at(-1).status = "completed";
+  r.store.event(tasks.at(-1), "task.completed", "done");
+  const result = await waiting;
+  assert.equal(result.timedOut, false);
+  assert.equal(result.group.byStatus.completed, 6);
+  assert.equal(result.tasks.length, 6);
+  assert.equal(r.store.listenerCount, 0);
 });
 
 test("normalized vocabulary retains the original event type", () => {

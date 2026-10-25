@@ -360,7 +360,16 @@ export class Store {
   save() {
     if (this.closed) throw Error("Store storage is not open");
     this.storage.persist(this.state);
-    for (const listener of this.listeners) listener();
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // A subscriber cannot undo a committed save or prevent other notifications.
+      }
+    }
+  }
+  get listenerCount() {
+    return this.listeners.size;
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);

@@ -36,16 +36,6 @@ async function tool(client, name, args) {
   assert.ok(!r.isError, JSON.stringify(r));
   return JSON.parse(r.content[0].text);
 }
-// Plugin persistence assertions below require completion across intermediate wakes.
-async function completedWait(client, args) {
-  const deadline = Date.now() + args.timeoutMs;
-  while (true) {
-    const result = await tool(client, "agents_wait", { ...args, timeoutMs: Math.max(0, deadline - Date.now()) });
-    if (result.timedOut || result.tasks.every((task) =>
-      ["completed", "failed", "cancelled", "timed_out", "blocked_on_input"].includes(task.status)))
-      return result;
-  }
-}
 async function stop(dir) {
   const pidFile = path.join(dir, ".agent-bridge/lock/pid");
   if (existsSync(pidFile)) {
@@ -73,7 +63,7 @@ test("Claude plugin autostarts one project daemon, reconnects to persistent task
       prompt: "remember plugin marker",
     });
     assert.equal(first.status, "queued");
-    const waited = await completedWait(two, {
+    const waited = await tool(two, "agents_wait", {
       taskIds: [first.taskId],
       timeoutMs: 4000,
     });
@@ -85,7 +75,7 @@ test("Claude plugin autostarts one project daemon, reconnects to persistent task
       prompt: "recall",
       agentSessionId: first.agentSessionId,
     });
-    await completedWait(two, {
+    await tool(two, "agents_wait", {
       taskIds: [second.taskId],
       timeoutMs: 4000,
     });
@@ -253,7 +243,7 @@ test("a stale daemon defers the update while tasks run and restarts once they fi
       resumed.taskId,
       "first call after terminal restarts and proceeds",
     );
-    await completedWait(client, {
+    await tool(client, "agents_wait", {
       taskIds: [resumed.taskId],
       timeoutMs: 4000,
     });

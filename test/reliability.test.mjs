@@ -379,7 +379,7 @@ test("agents_wait returns the lean bounded task shape", async () => {
       taskIds: [a.taskId],
       timeoutMs: 8000,
     });
-    assert.ok(["running", "completed", "starting"].includes(waited.tasks[0].status));
+    assert.equal(waited.tasks[0].status, "completed");
     assert.deepEqual(
       Object.keys(waited.tasks[0]).sort(),
       [
