@@ -378,7 +378,7 @@ test("actual daemon crash preserves history/queue and MCP reconnect does not own
     client = new Client({ name: "test", version: "1" });
     await client.connect(transport);
     const tools = (await client.listTools()).tools;
-    assert.equal(tools.length, 18);
+    assert.equal(tools.length, 20);
     const note = (name) =>
       tools.find((t) => t.name === name)?.annotations ?? {};
     assert.equal(note("agents_doctor").readOnlyHint, true);
