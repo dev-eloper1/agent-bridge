@@ -55,10 +55,24 @@ import {
 import { startDashboard } from "./dashboard.js";
 import { TriggerRegistry } from "./triggers.js";
 import { buildId } from "./build-id.js";
-import { buildHandoffPrompt } from "./handoff.js";
+import { buildHandoffPrompt, MAX_PROMPT_CHARS } from "./handoff.js";
 const taskId = z.string().regex(/^task_[a-f0-9-]{36}$/);
 const decisionId = z.string().regex(/^dec_[a-f0-9-]{36}$/);
 const MAX_DECISION_MS = 7 * 24 * 60 * 60 * 1000;
+// Decision text reaches the pane and the owner's terminal. Refuse control and
+// invisible formatting characters (escape sequences, zero-width, bidi), so
+// what the owner reads is what was stored.
+const unsafeText = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+const safeLine = (max: number) =>
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(max)
+    .refine((v) => !unsafeText.test(v), "must not contain control or invisible characters");
+// The form a person reads and types; labels must be distinct in this form.
+const displayKey = (v: string) =>
+  v.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
 // bounded, safe-charset group labels.
 const WAIT_LABEL_CAP = 10;
 const countTerminal = (byStatus: Record<string, number>) =>
@@ -197,20 +211,26 @@ export const inputs = {
   // from inputs (every key here becomes an MCP tool); see Runtime.decide.
   decision_open: z
     .object({
-      question: z.string().min(1).max(1000),
+      question: z
+        .string()
+        .trim()
+        .min(1)
+        .max(1000)
+        .refine(
+          (v) => !unsafeText.test(v.replaceAll("\n", " ")),
+          "must not contain control or invisible characters",
+        ),
       // Options are chosen by position or label, so a label must never look
       // like a position or repeat another label.
       options: z
         .array(
           z
             .object({
-              label: z
-                .string()
-                .trim()
-                .min(1)
-                .max(60)
-                .refine((l) => !/^\d+$/.test(l), "label must not be a number"),
-              tradeoff: z.string().min(1).max(200),
+              label: safeLine(60).refine(
+                (l) => !/^\d+$/.test(displayKey(l)),
+                "label must not be a number",
+              ),
+              tradeoff: safeLine(200),
             })
             .strict(),
         )
@@ -218,10 +238,17 @@ export const inputs = {
         .max(4)
         .refine(
           (o) =>
-            new Set(o.map((x) => x.label.toLowerCase())).size === o.length,
+            new Set(o.map((x) => displayKey(x.label))).size === o.length,
           "option labels must be distinct",
         ),
       allowFreeText: z.boolean().default(false),
+      maxFreeTextChars: z
+        .number()
+        .int()
+        .min(1)
+        .max(2000)
+        .default(500)
+        .describe("Longest free-text answer accepted; only with allowFreeText"),
       openedBy: taskId.optional(),
       expiresInMs: z.number().int().min(1).max(MAX_DECISION_MS).optional(),
     })
@@ -386,6 +413,24 @@ export class Runtime {
   append(t: Task, name: string, value: string) {
     this.store.append(t.taskId, name, this.sanitize(value));
   }
+  // A decision as fenced input; `answer` is the real one at run time, or the
+  // longest one the decision accepts when budgeting at spawn time.
+  decisionInput(d: Decision, answer: string) {
+    const text = `Question: ${d.question}\nAnswer: ${answer}`;
+    return {
+      taskId: d.decisionId,
+      source: `decision:${d.decisionId}`,
+      status: "resolved",
+      text,
+      maxChars: text.length,
+    };
+  }
+  longestAnswer(d: Decision) {
+    return Math.max(
+      ...d.options.map((o) => o.label.length),
+      d.allowFreeText ? (d.maxFreeTextChars ?? 500) : 0,
+    );
+  }
   // Expiry runs on a timer only; no tool or route can expire a decision early.
   armExpiry(decision: Decision) {
     if (decision.status !== "open" || !decision.expiresAt) return;
@@ -413,7 +458,7 @@ export class Runtime {
         decision,
         `decision.${status}`,
         status === "resolved"
-          ? `Decided via ${resolution?.surface}: ${resolution?.option ?? resolution?.text}`
+          ? `Decided (claimed surface ${resolution?.claimedSurface}): ${resolution?.option ?? resolution?.text}`
           : `Decision ${status}: ${decision.question}`,
       );
     } catch (error) {
@@ -423,8 +468,8 @@ export class Runtime {
     }
     this.schedule();
   }
-  // Human-only path. Not in `inputs`, so it is never exposed as an MCP tool;
-  // callers must name the surface (for example mod-button or mod-command).
+  // Human-only path. Not in `inputs`, so it is never exposed as an MCP tool.
+  // The surface is whatever the caller claims and is recorded as such.
   decide(a: { decisionId: string; option?: string; text?: string; surface: string }) {
     if (this.closed) throw Error("Runtime closed");
     const decision = this.store.state.decisions?.[a.decisionId];
@@ -438,19 +483,26 @@ export class Runtime {
       const index = /^[1-4]$/.test(a.option) ? Number(a.option) - 1 : -1;
       const match =
         decision.options[index] ??
-        decision.options.find((o) => o.label === a.option);
+        decision.options.find(
+          (o) => displayKey(o.label) === displayKey(a.option!),
+        );
       if (!match) throw Error(`Unknown option: ${a.option}`);
       this.closeDecision(decision, "resolved", {
         option: match.label,
-        surface: a.surface,
+        claimedSurface: a.surface,
         at,
       });
     } else if (a.text !== undefined) {
       if (!decision.allowFreeText)
         throw Error("This decision does not accept free text");
-      const text = a.text.trim().slice(0, 2000);
+      const text = a.text.trim();
       if (!text) throw Error("Answer text is empty");
-      this.closeDecision(decision, "resolved", { text, surface: a.surface, at });
+      const max = decision.maxFreeTextChars ?? 500;
+      if (text.length > max)
+        throw Error(`Answer is ${text.length} characters; this decision accepts at most ${max}`);
+      if (unsafeText.test(text.replaceAll("\n", " ")))
+        throw Error("Answer must not contain control or invisible characters");
+      this.closeDecision(decision, "resolved", { text, claimedSurface: a.surface, at });
     } else throw Error("Pass option or text");
     return decision;
   }
@@ -466,7 +518,7 @@ export class Runtime {
     if (!decision) throw Error("Unknown decision");
     if (decision.status !== "open")
       throw Error(`Decision is ${decision.status}`);
-    this.closeDecision(decision, "withdrawn", { surface: a.surface, at: now() });
+    this.closeDecision(decision, "withdrawn", { claimedSurface: a.surface, at: now() });
     return decision;
   }
   dependencyReady(id: string) {
@@ -980,6 +1032,22 @@ export class Runtime {
           if (decision.status === "withdrawn" || decision.status === "expired")
             throw Error(`Decision ${id} is ${decision.status}`);
         }
+        // Reserve room for the longest answer now, so a person's valid answer
+        // can never push an accepted task over the prompt limit later.
+        if (a.waitsOnDecisions?.length)
+          try {
+            buildHandoffPrompt(
+              this.sanitize(handoffPrompt ?? a.prompt),
+              a.waitsOnDecisions.map((id: string) => {
+                const d = this.store.state.decisions![id];
+                return this.decisionInput(d, "x".repeat(this.longestAnswer(d)));
+              }),
+            );
+          } catch {
+            throw Error(
+              `Prompt plus the longest possible answers to waitsOnDecisions would exceed ${MAX_PROMPT_CHARS} characters; shorten the prompt or lower maxFreeTextChars`,
+            );
+          }
         if (a.budgetLabel) {
           const budget = this.config.runtime.taskBudgets?.[a.budgetLabel];
           if (!budget)
@@ -1334,6 +1402,7 @@ export class Runtime {
           question: a.question,
           options: a.options,
           allowFreeText: a.allowFreeText,
+          ...(a.allowFreeText ? { maxFreeTextChars: a.maxFreeTextChars } : {}),
           status: "open",
           openedBy: a.openedBy ?? "coordinator",
           createdAt,
@@ -1801,14 +1870,10 @@ export class Runtime {
         prompt,
         t.waitsOnDecisions.map((id) => {
           const d = this.store.state.decisions![id];
-          const text = `Question: ${d.question}\nAnswer: ${d.resolution?.option ?? d.resolution?.text ?? ""}`;
-          return {
-            taskId: t.taskId,
-            source: `decision:${id}`,
-            status: d.status,
-            text,
-            maxChars: text.length,
-          };
+          return this.decisionInput(
+            d,
+            d.resolution?.option ?? d.resolution?.text ?? "",
+          );
         }),
       );
     const pinned = s.template ?? s.specialistSnapshot;
