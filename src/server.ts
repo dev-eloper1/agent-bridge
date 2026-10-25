@@ -87,12 +87,22 @@ export async function serve(config: Config) {
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    const closed = runtime.close();
+    const closed = runtime.close().catch((error) => {
+      console.error(
+        `Agent Bridge: shutdown failed: ${runtime.sanitize(String(error))}`,
+      );
+    });
     server.close(() => {
-      void closed.then(() => {
-        if (existsSync(config.socket)) rmSync(config.socket);
-        rmSync(lock, { recursive: true });
-      });
+      void closed
+        .then(() => {
+          if (existsSync(config.socket)) rmSync(config.socket);
+          rmSync(lock, { recursive: true });
+        })
+        .catch((error) => {
+          console.error(
+            `Agent Bridge: shutdown cleanup failed: ${runtime.sanitize(String(error))}`,
+          );
+        });
     });
   };
   process.once("SIGTERM", stop);

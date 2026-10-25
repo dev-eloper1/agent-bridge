@@ -1868,26 +1868,57 @@ export class Runtime {
     clearInterval(this.triggerTimer);
     this.dashboardServer?.server.close();
     this.closed = true;
+    let shutdownError: unknown;
     for (const r of this.active.values()) {
-      this.finish(
-        r.task,
-        "failed",
-        "Runtime stopped during execution; not replayed",
-      );
+      try {
+        this.finish(
+          r.task,
+          "failed",
+          "Runtime stopped during execution; not replayed",
+        );
+      } catch (error) {
+        shutdownError ??= error;
+      }
       this.interrupt(r);
       clearTimeout(r.timer);
     }
+    for (const [id, question] of this.questions) {
+      question.resolve(
+        question.kind === "input"
+          ? { action: "cancel" }
+          : { outcome: { outcome: "cancelled" } },
+      );
+      const task = this.store.state.tasks[question.taskId];
+      if (task?.question?.questionId === id) delete task.question;
+    }
+    this.questions.clear();
     for (const w of this.workers.values()) w.kill();
     this.workers.clear();
-    this.store.save();
-    // Interrupted workers and verification may still finish persistence callbacks.
+    // Bound the drain: late callbacks cannot write through a closed Store.
     this.closing = (async () => {
-      while (this.pendingStorage.size)
-        await Promise.allSettled([...this.pendingStorage]);
-      this.dashboardServer?.server.close();
+      let timer: NodeJS.Timeout | undefined;
+      let timedOut = false;
       try {
+        await Promise.race([
+          (async () => {
+            while (!timedOut && this.pendingStorage.size)
+              await Promise.allSettled([...this.pendingStorage]);
+          })(),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              console.warn(
+                "Agent Bridge: shutdown drain timed out after 5000ms; saving and closing storage with unfinished operations.",
+              );
+              resolve();
+            }, 5000);
+          }),
+        ]);
+        this.dashboardServer?.server.close();
         this.store.save();
+        if (shutdownError) throw shutdownError;
       } finally {
+        clearTimeout(timer);
         this.store.close();
       }
     })();

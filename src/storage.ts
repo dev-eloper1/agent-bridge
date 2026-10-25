@@ -6,7 +6,7 @@ import {
   fsyncSync,
   closeSync,
   renameSync,
-  chmodSync,
+  fchmodSync,
 } from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -73,9 +73,14 @@ export class SqliteStorage implements StoragePort {
   private closed = false;
   constructor(dir: string, Database: typeof DatabaseSync) {
     this.file = path.join(dir, "state.sqlite");
+    const fd = openSync(this.file, "a", 0o600);
+    try {
+      fchmodSync(fd, 0o600);
+    } finally {
+      closeSync(fd);
+    }
     this.db = new Database(this.file);
     try {
-      chmodSync(this.file, 0o600);
       this.db.exec(`
         PRAGMA journal_mode=WAL;
         PRAGMA synchronous=FULL;
@@ -184,13 +189,26 @@ export function createStorage(dir: string): StoragePort {
   if (!["json", "sqlite"].includes(backend))
     throw Error(`Unknown AGENT_BRIDGE_STORAGE: ${backend}`);
   if (backend === "json") {
-    if (
-      existsSync(path.join(dir, "state.sqlite")) &&
-      !existsSync(path.join(dir, "state.json"))
-    )
-      throw Error(
-        "Cannot select JSON for a SQLite-only state directory; export or use a separate state directory.",
+    const file = path.join(dir, "state.sqlite");
+    if (existsSync(file)) {
+      const { DatabaseSync: Database } = createRequire(import.meta.url)(
+        "node:sqlite",
       );
+      const db: DatabaseSync = new Database(file, { readOnly: true });
+      try {
+        for (const row of db
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all()) {
+          const table = String(row.name).replaceAll('"', '""');
+          if (db.prepare(`SELECT 1 FROM "${table}" LIMIT 1`).get())
+            throw Error(
+              `Cannot select JSON: ${file} holds data. Preserve it and ${path.join(dir, "state.json")}; use a separate state directory for JSON recovery.`,
+            );
+        }
+      } finally {
+        db.close();
+      }
+    }
     return new JsonStorage(dir);
   }
   let Database: typeof DatabaseSync;

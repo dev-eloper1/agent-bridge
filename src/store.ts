@@ -6,6 +6,7 @@ import {
   fsyncSync,
   closeSync,
   renameSync,
+  rmSync,
   lstatSync,
   realpathSync,
   constants,
@@ -259,6 +260,7 @@ export class Store {
   state: State;
   readonly artifactRoot: string;
   private readonly storage: StoragePort;
+  private closed = false;
   constructor(
     readonly dir: string,
     readonly maxBytes: number,
@@ -267,7 +269,10 @@ export class Store {
     if (lstatSync(path.join(dir, "artifacts")).isSymbolicLink())
       throw Error("Unsafe artifact directory: symlink");
     this.artifactRoot = realpathSync(path.join(dir, "artifacts"));
+    const databaseExisted = existsSync(path.join(dir, "state.sqlite"));
     this.storage = createStorage(dir);
+    let sourceFile = this.storage.file;
+    let imported = false;
     try {
       let loaded = this.storage.load();
       const legacy = new JsonStorage(dir);
@@ -276,16 +281,22 @@ export class Store {
         this.storage.file !== legacy.file &&
         existsSync(legacy.file)
       ) {
-        const imported = storedState.parse(legacy.load()) as State;
-        this.storage.persist(imported);
-        loaded = imported;
+        sourceFile = legacy.file;
+        const state = storedState.parse(legacy.load()) as State;
+        this.storage.persist(state);
+        imported = true;
+        loaded = state;
       }
       this.state =
         loaded === undefined
           ? { version: 1, tasks: {}, sessions: {}, events: [] }
           : (storedState.parse(loaded) as State);
-      // A committed database is authoritative after an interrupted migration.
       if (this.storage.file !== legacy.file && existsSync(legacy.file)) {
+        sourceFile = legacy.file;
+        if (!imported)
+          throw Error(
+            `Both ${this.storage.file} and ${legacy.file} hold state. Neither was changed. Preserve both, inspect their histories, and move ${legacy.file} aside before restarting SQLite.`,
+          );
         const backup = legacy.file + ".bak";
         renameSync(
           legacy.file,
@@ -300,8 +311,16 @@ export class Store {
       }
     } catch (error) {
       this.storage.close();
+      if (
+        !databaseExisted &&
+        !imported &&
+        this.storage.file === path.join(dir, "state.sqlite")
+      ) {
+        for (const suffix of ["", "-wal", "-shm"])
+          rmSync(this.storage.file + suffix, { force: true });
+      }
       throw Error(
-        `Invalid Agent Bridge state: ${this.storage.file}. Original file preserved; restore a valid backup or inspect it before restarting.`,
+        `Invalid Agent Bridge state: ${sourceFile}. Original file preserved; restore a valid backup or inspect it before restarting. ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
       );
     }
@@ -310,13 +329,16 @@ export class Store {
     return this.storage.file;
   }
   save() {
+    if (this.closed) throw Error("Store storage is not open");
     this.storage.persist(this.state);
   }
   readEventsSince(sequence: number) {
     return this.storage.readEventsSince(sequence);
   }
   close() {
+    if (this.closed) return;
     this.storage.close();
+    this.closed = true;
   }
   artifactPath(taskId: string, name: string) {
     if (

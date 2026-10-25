@@ -7,10 +7,14 @@ import {
   readFileSync,
   writeFileSync,
   rmSync,
+  statSync,
+  readdirSync,
+  renameSync,
 } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
+import { serve } from "../dist/server.js";
 import { Runtime } from "../dist/runtime.js";
 import { schema } from "../dist/config.js";
 import { Store } from "../dist/store.js";
@@ -103,7 +107,7 @@ test("sqlite: WAL/FULL, unchanged rows and transaction rollback preserve durable
   db.close();
   storage.close();
 });
-test("sqlite: JSON migration keeps exact backup and is idempotent after commit before rename", (t) => {
+test("sqlite: migration preserves backups and requires explicit recovery after commit before rename", (t) => {
   const dir = directory(t);
   const previous = process.env.AGENT_BRIDGE_STORAGE;
   process.env.AGENT_BRIDGE_STORAGE = "sqlite";
@@ -127,11 +131,19 @@ test("sqlite: JSON migration keeps exact backup and is idempotent after commit b
   store.close();
   // Simulate a crash after committing the import but before renaming its source.
   writeFileSync(file, original);
-  store = new Store(dir, 10000);
-  assert.deepEqual(store.state.triggerBudget, { fires: [42, 43] });
+  assert.throws(
+    () => new Store(dir, 10000),
+    (error) => {
+      assert.ok(error.message.includes(file));
+      assert.ok(error.message.includes(path.join(dir, "state.sqlite")));
+      assert.match(error.message, /Neither was changed/);
+      return true;
+    },
+  );
+  assert.equal(readFileSync(file, "utf8"), original);
   assert.equal(readFileSync(file + ".bak", "utf8"), original);
-  assert.equal(existsSync(file), false);
-  store.close();
+  // The owner explicitly moves the conflicting JSON aside after inspecting both.
+  renameSync(file, file + ".recovered");
   store = new Store(dir, 10000);
   assert.deepEqual(store.state.triggerBudget, { fires: [42, 43] });
   store.close();
@@ -276,7 +288,24 @@ test("sqlite: corrupt migration input is preserved, then a repaired source can b
   const dir = directory(t);
   const file = path.join(dir, "state.json");
   writeFileSync(file, '{"version":1');
-  assert.throws(() => new Store(dir, 10000), /Original file preserved/);
+  assert.throws(
+    () => new Store(dir, 10000),
+    (error) => {
+      assert.ok(
+        error.message.startsWith(`Invalid Agent Bridge state: ${file}.`),
+      );
+      assert.match(error.message, /Original file preserved/);
+      return true;
+    },
+  );
+  assert.equal(existsSync(path.join(dir, "state.sqlite")), false);
+  process.env.AGENT_BRIDGE_STORAGE = "json";
+  assert.throws(
+    () => new Store(dir, 10000),
+    /Original file preserved/,
+    "no empty database blocks JSON recovery",
+  );
+  process.env.AGENT_BRIDGE_STORAGE = "sqlite";
   assert.equal(readFileSync(file, "utf8"), '{"version":1');
   assert.equal(existsSync(file + ".bak"), false);
   writeFileSync(file, JSON.stringify(migrationState()));
@@ -294,7 +323,9 @@ test("selection rejects unknown values and JSON for a SQLite-only directory", (t
   );
   assert.equal(existsSync(path.join(dir, "state.sqlite")), false);
   process.env.AGENT_BRIDGE_STORAGE = "sqlite";
-  new Store(dir, 10000).close();
+  const store = new Store(dir, 10000);
+  store.save();
+  store.close();
   process.env.AGENT_BRIDGE_STORAGE = "json";
   assert.throws(() => new Store(dir, 10000), /Cannot select JSON/);
 });
@@ -459,3 +490,230 @@ for (const backend of ["sqlite", "json"]) {
     });
   }
 }
+
+test("selection refuses stale JSON alongside committed SQLite, preserving both histories", (t) => {
+  select(t, "sqlite");
+  const dir = directory(t);
+  const file = path.join(dir, "state.json");
+  const store = new Store(dir, 10000);
+  store.state.triggerBudget = { fires: [99] };
+  store.save();
+  store.close();
+  const stale = JSON.stringify({ ...empty(), triggerBudget: { fires: [42] } });
+  writeFileSync(file, stale);
+  process.env.AGENT_BRIDGE_STORAGE = "json";
+  assert.throws(
+    () => new Store(dir, 10000),
+    (error) => {
+      assert.match(error.message, /Cannot select JSON/);
+      assert.ok(error.message.includes(path.join(dir, "state.sqlite")));
+      assert.ok(error.message.includes(file));
+      return true;
+    },
+  );
+  process.env.AGENT_BRIDGE_STORAGE = "sqlite";
+  assert.throws(() => new Store(dir, 10000), /Neither was changed/);
+  assert.equal(readFileSync(file, "utf8"), stale);
+  assert.equal(existsSync(file + ".bak"), false);
+  const storage = new SqliteStorage(dir, DatabaseSync);
+  assert.deepEqual(storage.load().triggerBudget, { fires: [99] });
+  storage.close();
+});
+
+test("selection permits JSON beside an initialized database that has no committed state", (t) => {
+  select(t, "json");
+  const dir = directory(t);
+  new SqliteStorage(dir, DatabaseSync).close();
+  writeFileSync(path.join(dir, "state.json"), JSON.stringify(empty()));
+  const store = new Store(dir, 10000);
+  store.save();
+  assert.equal(store.file, path.join(dir, "state.json"));
+  store.close();
+});
+
+test("sqlite: database is private before SQLite opens it, including a permissive existing file", (t) => {
+  const dir = directory(t);
+  class CheckedDatabase extends DatabaseSync {
+    constructor(file) {
+      assert.equal(
+        statSync(file).mode & 0o777,
+        0o600,
+        "private before SQLite constructor",
+      );
+      super(file);
+    }
+  }
+  const previous = process.umask(0);
+  try {
+    for (const existing of [false, true]) {
+      if (existing)
+        writeFileSync(path.join(dir, "state.sqlite"), "", { mode: 0o666 });
+      const storage = new SqliteStorage(dir, CheckedDatabase);
+      storage.persist(empty());
+      for (const name of [
+        "state.sqlite",
+        "state.sqlite-wal",
+        "state.sqlite-shm",
+      ])
+        assert.equal(statSync(path.join(dir, name)).mode & 0o777, 0o600, name);
+      storage.close();
+      rmSync(path.join(dir, "state.sqlite"));
+    }
+  } finally {
+    process.umask(previous);
+  }
+});
+
+test("migration backup collision retains the old backup and gives the new backup a suffix", (t) => {
+  select(t, "sqlite");
+  const dir = directory(t);
+  const file = path.join(dir, "state.json");
+  const source = JSON.stringify(migrationState(), null, 2);
+  const previous = "previous backup bytes";
+  writeFileSync(file, source);
+  writeFileSync(file + ".bak", previous);
+  new Store(dir, 10000).close();
+  assert.equal(readFileSync(file + ".bak", "utf8"), previous);
+  const backups = readdirSync(dir).filter((name) =>
+    name.startsWith("state.json.bak."),
+  );
+  assert.equal(backups.length, 1);
+  assert.equal(readFileSync(path.join(dir, backups[0]), "utf8"), source);
+  assert.equal(existsSync(file), false);
+});
+
+function shutdownConfig(dir) {
+  return {
+    ...schema.parse({
+      version: 1,
+      providers: {
+        mock: {
+          command: process.execPath,
+          args: [path.join(process.cwd(), "scripts/mock-acp.mjs")],
+          readOnlyEnforced: true,
+        },
+      },
+      agents: {
+        agent: {
+          provider: "mock",
+          description: "shutdown",
+          workspace: "read-only",
+        },
+      },
+    }),
+    root: dir,
+    stateDir: path.join(dir, "state"),
+    socket: path.join(dir, "s"),
+    sourceFile: path.join(dir, "unused.yaml"),
+    configDigest: "shutdown-test",
+  };
+}
+
+for (const backend of ["sqlite", "json"]) {
+  test(`${backend}: shutdown deadline closes storage and prevents a stalled call from saving later`, async (t) => {
+    select(t, backend);
+    const dir = directory(t);
+    const runtime = new Runtime(shutdownConfig(dir));
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    runtime.workspace = async () => {
+      await gate;
+      return dir;
+    };
+    const pending = runtime.call("spawn", {
+      agentId: "agent",
+      prompt: "stalled",
+      verify: { argv: [process.execPath, "-e", ""] },
+    });
+    const rejected = assert.rejects(pending, /not open/);
+    const warnings = t.mock.method(console, "warn", () => {});
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let stopped = false;
+    const closing = runtime.close().then(() => {
+      stopped = true;
+    });
+    t.mock.timers.tick(4999);
+    await Promise.resolve();
+    assert.equal(stopped, false);
+    t.mock.timers.tick(1);
+    await closing;
+    t.mock.timers.reset();
+    assert.match(
+      warnings.mock.calls[0].arguments[0],
+      /shutdown drain timed out after 5000ms/,
+    );
+    assert.throws(() => runtime.store.save(), /not open/);
+    const reopened = new Store(runtime.config.stateDir, 10000);
+    assert.deepEqual(reopened.state.tasks, {});
+    release();
+    await rejected;
+    assert.deepEqual(reopened.state.tasks, {});
+    assert.deepEqual(reopened.readEventsSince(0), []);
+    reopened.close();
+  });
+}
+
+test("shutdown cancels orphaned input and permission questions and clears persisted question metadata", async (t) => {
+  select(t, "sqlite");
+  const dir = directory(t);
+  const runtime = new Runtime(shutdownConfig(dir));
+  runtime.store.state = migrationState();
+  runtime.store.state.tasks.task.question = {
+    questionId: "input",
+    artifactRef: "artifact",
+    kind: "input",
+    summary: "pending",
+  };
+  const answers = ["input", "permission"].map(
+    (kind) =>
+      new Promise((resolve) => {
+        runtime.questions.set(kind, {
+          taskId: "task",
+          kind,
+          request: {},
+          resolve,
+        });
+      }),
+  );
+  await runtime.close();
+  assert.deepEqual(await Promise.all(answers), [
+    { action: "cancel" },
+    { outcome: { outcome: "cancelled" } },
+  ]);
+  assert.equal(runtime.questions.size, 0);
+  const reopened = new Store(runtime.config.stateDir, 10000);
+  assert.equal(reopened.task("task").question, undefined);
+  reopened.close();
+});
+
+test("daemon stop reports a failed final save and still removes its socket and lock", async (t) => {
+  select(t, "sqlite");
+  const dir = directory(t);
+  const config = shutdownConfig(dir);
+  const { runtime, server, stop } = await serve(config);
+  t.after(async () => {
+    process.off("SIGTERM", stop);
+    process.off("SIGINT", stop);
+    await runtime.close().catch(() => {});
+  });
+  const errors = t.mock.method(console, "error", () => {});
+  t.mock.method(runtime.store, "save", () => {
+    throw Error("injected final save failure");
+  });
+  const serverClosed = new Promise((resolve) => server.once("close", resolve));
+  stop();
+  await serverClosed;
+  const deadline = Date.now() + 2000;
+  while (existsSync(path.join(config.stateDir, "lock"))) {
+    assert.ok(Date.now() < deadline, "lock removed after failed save");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(existsSync(config.socket), false);
+  assert.match(
+    errors.mock.calls[0].arguments[0],
+    /shutdown failed:.*injected final save failure/,
+  );
+  assert.throws(() => runtime.store.readEventsSince(0), /not open/);
+});

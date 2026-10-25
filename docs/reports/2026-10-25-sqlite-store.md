@@ -1,68 +1,63 @@
 In plain words
 
-Agent Bridge now saves runtime state in SQLite by default without changing how callers use Store. Existing JSON history is imported once and kept as a backup, and graceful shutdown finishes pending saves before closing the database. Users can still select the original JSON store explicitly.
+Agent Bridge saves runtime state in SQLite by default while keeping the existing Store calls. It preserves the old JSON backup and now stops with a clear message when both stores contain potentially different histories. Shutdown cancels questions, waits a bounded time for pending work, then saves and closes storage.
 
 ## What changed
 
-- Added a storage port for loading state, persisting changes, appending events and reading events after a sequence, with JSON and SQLite adapters. No dependencies or lockfile changes.
-- SQLite uses Node's built-in `node:sqlite`, WAL and `synchronous=FULL`. Each save commits entity changes, metadata/budgets and new events in one transaction. Entity JSON is keyed by collection and ID; unchanged rows are not rewritten and deleted entities are removed.
-- Events are append-only rows with a global integer sequence matching the existing cursor. Replay after a sequence and strictly increasing cursors across restart are tested on both stores.
-- Store retains state validation, mutable state, save/event calls and bounded artifact handling. Runtime task/trigger persistence calls retain their existing pattern; the daemon's exclusive lock remains the single-writer boundary.
-- Graceful Runtime.close() now returns an idempotent promise: it stops scheduling, interrupts workers/verifiers, drains in-flight calls and execution callbacks, saves, and explicitly closes storage. Read-only status/history access remains available after stop. The server waits for database shutdown before removing its lock.
-- Updated ARCHITECTURE.md and ADR-001-runtime.md with selection, migration, shutdown and recovery details.
+- Added a storage port for load, persist, append events and replay after a sequence, with SQLite and original atomic JSON adapters. No dependencies or lockfile changes.
+- SQLite uses Node's built-in `node:sqlite`, WAL and `synchronous=FULL`. Each save commits entity changes, budgets and new events in one transaction. Entity JSON is keyed by collection and ID; unchanged rows are not rewritten. Events are append-only with a global integer sequence matching the existing cursor.
+- Store retains validation, mutable state, save/event calls and bounded artifact handling. Runtime task/trigger persistence calls retain their existing pattern and the daemon retains its exclusive writer lock.
+- JSON selection inspects any existing SQLite database and refuses it if any table contains rows, even if `state.json` is present. An initialized database with no rows permits explicit JSON selection after inspection. Unknown, unreadable or unavailable SQLite state is not silently abandoned.
+- SQLite startup refuses to choose between an existing committed database and `state.json`. The diagnostic names both files; neither history is automatically archived, replaced or discarded.
+- Database creation uses mode 0600, and an existing file is tightened to 0600 before SQLite opens it or writes schema/data. Tests check the database before its SQLite constructor and check database/WAL/SHM permissions under a permissive umask.
+- Runtime.close() cancels all pending input/permission questions and drains in-flight calls and worker/verifier callbacks for up to five seconds. It warns on timeout, then attempts the final save and closes storage even if saving fails. Closed Store instances reject late saves on both adapters. Shutdown remains idempotent.
+- The server catches a rejected shutdown promise, logs the failure, and still removes its socket and lock. Cleanup failures are also logged rather than becoming unhandled rejections.
+- Architecture and ADR documentation describe selection, persistence, shutdown and recovery.
 
 ## Migration and recovery
 
-On first SQLite startup, a valid `state.json` is validated and imported in one transaction. Only after commit is that file renamed to `state.json.bak`; its bytes are preserved exactly. An existing backup is kept and a unique suffix is used for the next one. A committed SQLite database is authoritative if startup stopped between commit and rename, so stale JSON cannot overwrite newer database history.
+On first SQLite startup, a valid `state.json` is validated and imported transactionally, then renamed to `state.json.bak`. Backup bytes are preserved exactly. Existing backup names are never overwritten: a collision gives the new backup a unique suffix.
 
-An import interrupted before commit rolls back, including partially written entities and events. Its JSON source remains available and the next startup can retry the full import. Corrupt JSON is preserved with a recovery diagnostic; repair it or restore a valid source before retrying. Database errors do not silently switch the daemon to an empty store.
+An import interrupted before commit rolls back all partial writes; the JSON source remains available for retry. Corrupt JSON produces a diagnostic naming `state.json`, rather than incorrectly naming the database. A newly created database and its sidecars are removed after a failed import, so that failed attempt does not block JSON recovery. Pre-existing database files are preserved.
 
-To recover an existing SQLite history, first stop the daemon and preserve its entire state directory. Restart with a Node release that supports `node:sqlite`. Keep any remaining WAL with the database: it can contain committed state needed for SQLite's recovery. Closing the last connection normally checkpoints and removes the WAL; shutdown tests observed this and reopened the database with a successful integrity check.
+If startup stops after commit but before the source rename, the next startup sees **both files** and refuses to choose a history. The same refusal applies if someone restores an old JSON backup beside newer SQLite state. This repair deliberately replaces the previous behavior that automatically archived the JSON source and continued from SQLite.
 
-To run the old JSON backup instead, copy `state.json.bak` to `state.json` in a **separate state directory**, copy the matching `artifacts/` if needed, point `runtime.stateDir` at that directory, and start with `AGENT_BRIDGE_STORAGE=json`. This returns to the history present at migration time; it does **not** include later SQLite changes. Keep the original SQLite directory for recovery of newer history. There is no automatic export back to JSON.
+For recovery:
+
+1. Stop the daemon and preserve the whole state directory, including any database WAL, the JSON source, backups and artifacts.
+2. If both `state.sqlite` and `state.json` exist, inspect both histories before choosing. To resume SQLite, move the JSON source to a separate recovery location without deleting it, then restart with SQLite. To use that JSON history, copy it into a separate state directory as `state.json` and select JSON there. Keep the SQLite directory for recovery of newer or different history.
+3. To run the pre-migration backup, copy `state.json.bak` into a **separate state directory** as `state.json`, copy the matching artifacts if needed, point `runtime.stateDir` at that directory, and start with `AGENT_BRIDGE_STORAGE=json`. That backup excludes every change saved to SQLite after migration. Restoring it alongside a populated SQLite database does not bypass the refusal.
+4. If `node:sqlite` is unavailable for an existing database, restart with a Node release supporting SQLite. Automatic fallback warns and only uses JSON when no database exists; it cannot safely inspect an existing database without SQLite support. Do not delete a database or WAL to force fallback. No SQLite-to-JSON export is included.
+
+Closing the last SQLite connection normally checkpoints and removes its WAL. If a crash or another connection leaves the WAL present, keep it with the database so SQLite can recover committed transactions.
 
 ## How it was tested
 
-Installed Node: **v26.2.0**. package.json requires **Node >=24**. SQLite is built in; no npm dependency was added.
+Installed Node: **v26.2.0**; package.json requires **Node >=24**. No npm dependency was added.
 
-Observed successful full runs in round 2, both including the TypeScript build:
+Observed full runs in this repair round, including the TypeScript build and the stacked PR 1 catalog tests:
 
-- `GIT_CEILING_DIRECTORIES="$PWD/tmp" TMPDIR="$PWD/tmp" npm test`: **226 passing, 0 failing, 0 skipped**.
-- `GIT_CEILING_DIRECTORIES="$PWD/tmp" TMPDIR="$PWD/tmp" AGENT_BRIDGE_STORAGE=json npm test`: **226 passing, 0 failing, 0 skipped**.
+- `GIT_CEILING_DIRECTORIES="$PWD/tmp" TMPDIR="$PWD/tmp" npm test`: **238 passing, 0 failing, 0 skipped**.
+- `GIT_CEILING_DIRECTORIES="$PWD/tmp" TMPDIR="$PWD/tmp" AGENT_BRIDGE_STORAGE=json npm test`: **238 passing, 0 failing, 0 skipped**.
 
-Focused checks run during this round:
+Focused build/regression command: `npm run build` followed by `GIT_CEILING_DIRECTORIES="$PWD/tmp" TMPDIR="$PWD/tmp" node --test test/storage.test.mjs`: **23 passing, 0 failing**. This repair adds eight tests to the prior stacked suite. No asynchronous activity failures were reported in the successful full runs. Full suites and the daemon cleanup regression required sandbox permission for local test listeners. Scratch stayed in this worktree and was removed before completion. `git diff --check` reported no whitespace errors.
 
-- `node --test test/storage.test.mjs`: **11 passing, 0 failing** before adding the four shutdown tests.
-- `npm run build` followed by `GIT_CEILING_DIRECTORIES="$PWD/tmp" TMPDIR="$PWD/tmp" node --test test/storage.test.mjs test/budget-pools.test.mjs test/depends-on.test.mjs test/trigger-to-task.test.mjs`: **50 passing, 0 failing** after shutdown fixes.
-- `git diff --check`: no whitespace errors.
+The 23 storage tests cover both adapters' persistence, changes, deletions, budgets and replay; WAL/FULL; transaction and append rollback; unchanged-row writes; SIGKILL before import commit; SQL-trigger failure during partial import; exact backup retention; corrupt-source recovery; module-load fallback and warning; invalid selection; strictly increasing event sequences across restart; worker/verifier shutdown; and successful reopen/WAL checkpoint.
 
-The final suite includes 15 storage tests covering:
+Repair-specific assertions cover refusal with stale JSON beside populated SQLite and preservation of both histories; explicit JSON selection beside a truly empty initialized database; private permissions before SQLite opens the file and on its sidecars; backup-name collision suffixes; a five-second timeout on each adapter that still performs the final save and rejects a resumed late save; cancellation of orphaned input and permission questions; and socket/lock cleanup after an injected final-save failure.
 
-- Both adapters' persistence, in-place changes, deletions, budgets and ordered replay.
-- WAL/FULL settings, save rollback, unchanged-row writes and atomic append rollback.
-- Exact backup preservation and repeat startup after commit before source rename.
-- A child process killed with SIGKILL after writing import entities but before commit; recovery observes zero committed entity, metadata or event rows and successfully imports the full source once.
-- An SQL-trigger failure on the second imported event, rollback of partial writes, and a successful retry.
-- Corrupt-source preservation and successful import after repair, using a fixture containing tasks, sessions, triggers, budgets and events.
-- A module-load hook making `node:sqlite` unavailable: JSON fallback and warning, plus refusal to abandon an existing database.
-- Invalid adapter selection and refusal of JSON for a SQLite-only directory.
-- Increasing, nonduplicated event IDs/cursors across close and reopen on both adapters.
-- Shutdown during a blocked worker and active verification, draining late callbacks, idempotent stop, final persisted outcomes, database closure, WAL checkpoint and successful reopen.
-
-Initial round-2 full runs exposed test cleanup that deleted directories before the new asynchronous shutdown completed, and new verification tests initially inherited worker-mode restrictions. Cleanup now awaits shutdown, and direct coordinator tests explicitly clear the worker marker, matching existing coordinator fixtures. Final full runs above have zero failures and no reported asynchronous activity after tests ended. Local listeners and daemon/worker processes were started only by tests; full suites needed sandbox permission for listeners. Git discovery is bounded because required scratch files are inside this worktree.
-
-Existing test changes are limited to persistence assumptions and shutdown ordering. Verification-recovery and persisted-label-validation fixtures use Store instead of assuming state.json exists. Recovery now reopens Store after awaiting runtime shutdown to restore its crash snapshot. Budget, dependency, trigger, verification and seatbelt cleanup/restart fixtures await close before deleting directories or reopening state. The startup-error fixture has a shorter scratch prefix to fit macOS Unix socket limits. Existing behavior assertions were retained.
+Existing test changes are deliberate: the post-commit/pre-rename migration test now expects explicit conflict recovery rather than automatic archival. Its recovery fixture preserves the conflicting JSON under another name before retrying. The selection test now writes committed state before asserting refusal, since an empty initialized database is allowed. The corrupt-source test checks the correct filename and absence of a newly created empty database. Earlier PR tests continue to use Store rather than assume state.json exists, await asynchronous cleanup before directory removal/restart, and use a shorter startup fixture prefix for macOS Unix socket limits. Existing task behavior assertions were retained.
 
 ## Choices I made
 
-- Used `AGENT_BRIDGE_STORAGE=json|sqlite` instead of adding a configuration field, keeping storage selection out of runtime task/trigger logic.
-- Kept the owner's approved conservative SQLite-to-JSON refusal. Explicit JSON selection refuses a SQLite-only directory; automatic module-load fallback also refuses an existing SQLite database. Recovery through the old backup is documented above rather than adding export tooling.
-- Only module-load failure triggers JSON fallback with a warning. Database open, validation and persistence failures remain errors.
-- Kept JSON entity rows and an in-memory state scan for this first version. Unchanged database rows are not rewritten, but scanning work still grows with retained history.
-- Shutdown awaits in-flight callbacks instead of closing SQLite while worker or verifier callbacks can still save. The exclusive daemon lock is held through that drain.
+- Kept `AGENT_BRIDGE_STORAGE=json|sqlite` instead of adding a configuration field.
+- Applied the owner's conservative refusal to every populated SQLite database, regardless of a neighboring JSON source. Ambiguous dual histories require explicit recovery; automatic archival is no longer used in that case.
+- Preserve pre-existing database files, including empty ones, rather than delete user files during recovery. Explicit JSON selection can inspect and accept an empty database when SQLite is available; module-load fallback cannot make that determination and refuses any existing database.
+- Used a fixed five-second asynchronous drain deadline. A timeout is visible in the warning; final persistence and close are still attempted. Disk operations themselves are synchronous and are not bounded by that timer.
+- Kept JSON entity rows and in-memory state scans for this first version. Database writes skip equal rows, but scanning work still grows with retained history.
 
 ## Risks and what is left
 
-All requested PR 2 work is complete. Migration, fallback/selection, shutdown and event-sequence tests are in place; both adapter suites are green; architecture, ADR and this report are finalized.
+The requested repair is complete. Both full adapter suites have zero failures, and regression tests cover each review finding.
 
-Events remain unpruned and fully loaded into memory for facade compatibility. Save scans still grow with retained state. Artifacts remain outside the state transaction. Graceful stop waits for in-flight operations to settle; forced termination relies on SQLite recovery. The SIGKILL and transaction-failure tests do not prove survival of every power-loss or filesystem-failure scenario. The JSON backup predates all post-migration SQLite changes, and no SQLite-to-JSON export is included. Live event push and decision records remain for later PRs.
+Events remain unpruned and fully loaded into memory. Artifacts remain outside state transactions. On drain timeout, unfinished operations are abandoned for persistence and late saves reject; the last successful transaction remains the recovery boundary if the final save fails. The shutdown deadline does not bound a blocked filesystem operation. SIGKILL and injected transaction failures do not prove survival of every power-loss or filesystem-failure scenario. JSON backups omit later SQLite changes, and comparing or reconciling divergent histories remains manual. Live event push, decision records and export tooling are outside this PR.
