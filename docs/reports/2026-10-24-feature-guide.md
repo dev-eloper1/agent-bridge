@@ -329,7 +329,7 @@ agents:
 - *Rejected alternatives:* nesting inside the provider's own sandbox, which macOS does not allow; denying all file access by default, which breaks the workers.
 - *Cost:* 52 lines of profile code plus validation.
 - *Risks:* `sandbox-exec` is deprecated by Apple. The profile allows everything else, so the network and your home folder remain open.
-- *Limits:* macOS only, and no worktrees. The scope decision in idea lab §7.8 is still open and yours to make.
+- *Limits:* macOS only, and no worktrees. The owner decided on 25 October to keep this scope (idea lab §7.8).
 
 ---
 
