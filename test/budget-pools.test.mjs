@@ -50,8 +50,8 @@ function fixture(cap = 1) {
   return {
     runtime,
     config,
-    cleanup() {
-      runtime.close();
+    async cleanup() {
+      await runtime.close();
       rmSync(dir, { recursive: true, force: true });
     },
   };
@@ -97,7 +97,7 @@ test("agent pool skips a saturated agent, global cap holds, and a released slot 
     assert.equal(status(r, globalWaiter), "queued");
     assert.equal(r.active.size, 2);
   } finally {
-    f.cleanup();
+    await f.cleanup();
   }
 });
 
@@ -114,7 +114,7 @@ test("omitting an agent cap preserves same-agent parallelism", async () => {
       "uncapped agent should use both global slots",
     );
   } finally {
-    f.cleanup();
+    await f.cleanup();
   }
 });
 
@@ -157,7 +157,7 @@ test("label task budget rejects the fourth spawn, preserves retries and survives
     );
     for (const task of Object.values(r.store.state.tasks))
       await r.call("cancel", { taskId: task.taskId });
-    r.close();
+    await r.close();
     r = new Runtime(f.config);
     await assert.rejects(
       spawn(r, "one", { budgetLabel: "experiment" }),
@@ -165,8 +165,8 @@ test("label task budget rejects the fourth spawn, preserves retries and survives
     );
     assert.equal(Object.keys(r.store.state.tasks).length, 3);
   } finally {
-    r.close();
-    f.cleanup();
+    await r.close();
+    await f.cleanup();
   }
 });
 
@@ -181,7 +181,7 @@ test("cap changes preserve fingerprints and durable follow-ups after restart", a
     const first = await spawn(r, "one", { prompt: "ping" });
     await until(() => status(r, first) === "completed", "first task completes");
     const original = { ...r.session(r.store.task(first.taskId)) };
-    r.close();
+    await r.close();
     f.config.agents.one.maxConcurrent = 2;
     r = new Runtime(f.config);
     const follow = await spawn(r, "one", {
@@ -225,7 +225,7 @@ test("cap changes preserve fingerprints and durable follow-ups after restart", a
       )
       .digest("hex");
     r.store.save();
-    r.close();
+    await r.close();
     f.config.agents.one.maxConcurrent = 2;
     r = new Runtime(f.config);
     const legacy = await spawn(r, "one", {
@@ -246,8 +246,8 @@ test("cap changes preserve fingerprints and durable follow-ups after restart", a
       /configuration changed/,
     );
   } finally {
-    r.close();
-    f.cleanup();
+    await r.close();
+    await f.cleanup();
   }
 });
 
@@ -323,7 +323,7 @@ test("workspace preference caps override defaults and global reductions clamp wi
       );
     }
   } finally {
-    r?.close();
+    await r?.close();
     if (oldHome === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = oldHome;
     if (oldConfig === undefined) delete process.env.AGENT_BRIDGE_CONFIG;

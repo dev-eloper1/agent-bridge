@@ -77,7 +77,7 @@ export async function serve(config: Config) {
       server.listen(config.socket, resolve);
     });
   } catch (e) {
-    runtime.close();
+    await runtime.close();
     rmSync(lock, { recursive: true });
     throw e;
   }
@@ -87,10 +87,12 @@ export async function serve(config: Config) {
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    runtime.close();
+    const closed = runtime.close();
     server.close(() => {
-      if (existsSync(config.socket)) rmSync(config.socket);
-      rmSync(lock, { recursive: true });
+      void closed.then(() => {
+        if (existsSync(config.socket)) rmSync(config.socket);
+        rmSync(lock, { recursive: true });
+      });
     });
   };
   process.once("SIGTERM", stop);

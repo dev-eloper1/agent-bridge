@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { Store } from "../dist/store.js";
 import { Runtime, inputs } from "../dist/runtime.js";
 import { schema } from "../dist/config.js";
 
@@ -47,7 +48,7 @@ function fixture(t, maxConcurrentTasks = 2) {
   };
   const r = new Runtime(config);
   t.after(async () => {
-    if (!r.closed) r.close();
+    await r.close();
     await until(
       () => r.active.size,
       (size) => size === 0,
@@ -215,7 +216,7 @@ test("lab: restart preserves queued dependency graph and resumes in dependency o
   const a = await spawn(r, "ASK queued A");
   const c = await spawn(r, "join", [a.taskId]);
   // Close before the pending setImmediate spawn passes: both tasks stay queued.
-  r.close();
+  await r.close();
   assert.equal((await status(r, a)).status, "queued");
   assert.equal((await status(r, c)).status, "queued");
   const restarted = new Runtime(r.config);
@@ -233,7 +234,7 @@ test("lab: restart preserves queued dependency graph and resumes in dependency o
     assert.ok(finishedC.startedAt >= finishedA.finishedAt);
     assert.equal(finishedC.queueReason, undefined);
   } finally {
-    restarted.close();
+    await restarted.close();
     await until(
       () => restarted.active.size,
       (size) => size === 0,
@@ -409,12 +410,14 @@ test("F1: reload fails interrupted verification and its queued dependent", async
   const dependent = await spawn(r, "must not wait forever", [dependency.taskId]);
   await release(r, dependency);
   assert.equal(r.store.task(dependency.taskId).verification, "pending");
-  const stateFile = path.join(r.config.stateDir, "state.json");
+
   // Capture the durable crash boundary, then stop processes before restoring it.
-  const snapshot = readFileSync(stateFile, "utf8");
-  r.close();
-  await until(() => r.active.size, (size) => size === 0);
-  writeFileSync(stateFile, snapshot);
+  const snapshot = JSON.stringify(r.store.state);
+  await r.close();
+  const restored = new Store(r.config.stateDir, 10000);
+  restored.state = JSON.parse(snapshot);
+  restored.save();
+  restored.close();
   const reloaded = new Runtime(r.config);
   try {
   reloaded.start();
@@ -429,5 +432,5 @@ test("F1: reload fails interrupted verification and its queued dependent", async
   assert.match(failed.summary, /verification failed: restarted/);
   assert.ok(failed.summary.includes(dependency.taskId));
   assert.equal(failed.startedAt, undefined);
-  } finally { reloaded.close(); }
+  } finally { await reloaded.close(); }
 });

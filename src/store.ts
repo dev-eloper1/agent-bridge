@@ -3,7 +3,6 @@ import {
   existsSync,
   readFileSync,
   openSync,
-  writeSync,
   fsyncSync,
   closeSync,
   renameSync,
@@ -16,6 +15,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { createStorage, JsonStorage, type StoragePort } from "./storage.js";
 import type { VerifySpec, VerificationResult } from "./verify-verdict.js";
 import type { Workspace, WorkspaceIdentity } from "./workspaces.js";
 import { z } from "zod";
@@ -138,7 +138,7 @@ export interface Event {
   requiresReply: boolean;
   artifactRefs: string[];
 }
-interface State {
+export interface State {
   triggerBudget?: { fires: number[] };
   triggers?: Record<string, Trigger>;
   version: 1;
@@ -258,6 +258,7 @@ const storedState = z
 export class Store {
   state: State;
   readonly artifactRoot: string;
+  private readonly storage: StoragePort;
   constructor(
     readonly dir: string,
     readonly maxBytes: number,
@@ -266,37 +267,56 @@ export class Store {
     if (lstatSync(path.join(dir, "artifacts")).isSymbolicLink())
       throw Error("Unsafe artifact directory: symlink");
     this.artifactRoot = realpathSync(path.join(dir, "artifacts"));
-    if (existsSync(this.file)) {
-      try {
-        this.state = storedState.parse(
-          JSON.parse(readFileSync(this.file, "utf8")),
-        ) as State;
-      } catch {
-        throw Error(
-          `Invalid Agent Bridge state: ${this.file}. Original file preserved; restore a valid backup or inspect it before restarting.`,
-        );
+    this.storage = createStorage(dir);
+    try {
+      let loaded = this.storage.load();
+      const legacy = new JsonStorage(dir);
+      if (
+        loaded === undefined &&
+        this.storage.file !== legacy.file &&
+        existsSync(legacy.file)
+      ) {
+        const imported = storedState.parse(legacy.load()) as State;
+        this.storage.persist(imported);
+        loaded = imported;
       }
-    } else this.state = { version: 1, tasks: {}, sessions: {}, events: [] };
+      this.state =
+        loaded === undefined
+          ? { version: 1, tasks: {}, sessions: {}, events: [] }
+          : (storedState.parse(loaded) as State);
+      // A committed database is authoritative after an interrupted migration.
+      if (this.storage.file !== legacy.file && existsSync(legacy.file)) {
+        const backup = legacy.file + ".bak";
+        renameSync(
+          legacy.file,
+          existsSync(backup) ? backup + "." + randomUUID() : backup,
+        );
+        const fd = openSync(dir, "r");
+        try {
+          fsyncSync(fd);
+        } finally {
+          closeSync(fd);
+        }
+      }
+    } catch (error) {
+      this.storage.close();
+      throw Error(
+        `Invalid Agent Bridge state: ${this.storage.file}. Original file preserved; restore a valid backup or inspect it before restarting.`,
+        { cause: error },
+      );
+    }
   }
   get file() {
-    return path.join(this.dir, "state.json");
+    return this.storage.file;
   }
   save() {
-    const tmp = this.file + ".tmp";
-    const fd = openSync(tmp, "w", 0o600);
-    try {
-      writeSync(fd, JSON.stringify(this.state));
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(tmp, this.file);
-    const d = openSync(this.dir, "r");
-    try {
-      fsyncSync(d);
-    } finally {
-      closeSync(d);
-    }
+    this.storage.persist(this.state);
+  }
+  readEventsSince(sequence: number) {
+    return this.storage.readEventsSince(sequence);
+  }
+  close() {
+    this.storage.close();
   }
   artifactPath(taskId: string, name: string) {
     if (

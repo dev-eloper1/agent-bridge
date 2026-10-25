@@ -22,7 +22,7 @@ test("invalid or truncated state fails with a recovery diagnostic and preserves 
 });
 
 test("daemon spawn errors report their cause promptly rather than an eight-second generic timeout", async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "ab-startup-error-"));
+  const dir = mkdtempSync(path.join(tmpdir(), "ab-e-"));
   const c = {
     ...loadConfig(),
     root: path.join(dir, "missing-cwd"),

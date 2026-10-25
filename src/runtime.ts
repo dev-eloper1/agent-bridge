@@ -219,6 +219,13 @@ export class Runtime {
   active = new Map<string, Active>();
   questions = new Map<string, Question>();
   closed = false;
+  private readonly pendingStorage = new Set<Promise<unknown>>();
+  private closing?: Promise<void>;
+  private trackStorage<T>(operation: Promise<T>): Promise<T> {
+    const tracked = operation.finally(() => this.pendingStorage.delete(tracked));
+    this.pendingStorage.add(tracked);
+    return tracked;
+  }
   readonly startedAt = now();
   dashboardServer?: Awaited<ReturnType<typeof startDashboard>>;
   dashboardStarting?: Promise<Awaited<ReturnType<typeof startDashboard>>>;
@@ -413,6 +420,18 @@ export class Runtime {
     };
   }
   async call(
+    method: string,
+    raw: unknown,
+    triggerId?: string,
+  ): Promise<unknown> {
+    if (this.closed) {
+      if (["list", "status", "events", "result", "artifact"].includes(method))
+        return this.dispatch(method, raw, triggerId);
+      throw Error("Runtime closed");
+    }
+    return this.trackStorage(this.dispatch(method, raw, triggerId));
+  }
+  private async dispatch(
     method: string,
     raw: unknown,
     triggerId?: string,
@@ -1015,6 +1034,7 @@ export class Runtime {
         if (!a.taskIds === !a.label)
           throw Error("Use exactly one of taskIds or label");
         while (true) {
+          if (this.closed) throw Error("Runtime closed");
           if (a.label) {
             const group = this.labelGroup(a.label);
             if (!group.total) throw Error("No tasks with this label");
@@ -1245,7 +1265,7 @@ export class Runtime {
         !this.active.has(t.agentSessionId) &&
         !waitingPermission.has(t.agentId)
       )
-        void this.run(t);
+        void this.trackStorage(this.run(t));
     }
   }
   pause(r?: Active) {
@@ -1384,7 +1404,7 @@ export class Runtime {
     t.startedAt = now();
     this.store.event(t, "task.started", "Starting worker");
     try {
-      await Promise.race([this.execute(r), interrupted]);
+      await Promise.race([this.trackStorage(this.execute(r)), interrupted]);
     } catch (e) {
       // Worker completion precedes verification. An exception after completion
       // must settle the verdict so queued dependents cannot wait forever.
@@ -1843,7 +1863,8 @@ export class Runtime {
       );
     });
   }
-  close() {
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
     clearInterval(this.triggerTimer);
     this.dashboardServer?.server.close();
     this.closed = true;
@@ -1859,5 +1880,17 @@ export class Runtime {
     for (const w of this.workers.values()) w.kill();
     this.workers.clear();
     this.store.save();
+    // Interrupted workers and verification may still finish persistence callbacks.
+    this.closing = (async () => {
+      while (this.pendingStorage.size)
+        await Promise.allSettled([...this.pendingStorage]);
+      this.dashboardServer?.server.close();
+      try {
+        this.store.save();
+      } finally {
+        this.store.close();
+      }
+    })();
+    return this.closing;
   }
 }
