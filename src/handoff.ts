@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 
 export const MAX_PROMPT_CHARS = 16000;
 
-export type HandoffSource = { taskId: string; status: string; text: string; maxChars: number };
+export type HandoffSource = { taskId: string; status: string; text: string; maxChars: number; source?: string };
 
 // Cut to at most max UTF-16 units without splitting a surrogate pair.
 export function sliceCodePoints(text: string, max: number) {
@@ -34,7 +34,7 @@ export function buildHandoffPrompt(
     const slice = slices[i];
     const truncated = slice.length < s.text.length;
     return [
-      `<<<BEGIN ${fence} source=task:${s.taskId} status=${s.status} chars=${slice.length}${truncated ? ` truncated_from=${s.text.length}` : ""}>>>`,
+      `<<<BEGIN ${fence} source=${s.source ?? `task:${s.taskId}`} status=${s.status} chars=${slice.length}${truncated ? ` truncated_from=${s.text.length}` : ""}>>>`,
       slice,
       `<<<END ${fence}>>>`,
     ].join("\n");

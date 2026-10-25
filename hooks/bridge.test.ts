@@ -165,7 +165,9 @@ function setup(on) {
   const configureCalls = [],
     migrateCalls = [],
     processCommands = [],
-    replyCalls = [];
+    replyCalls = [],
+    decisions = [],
+    humanCalls = [];
   const replyError = { value: undefined };
   const configureResult = {
     value: {
@@ -266,6 +268,23 @@ function setup(on) {
       result = allTasks.find((t) => t.taskId === request.args.taskId);
       result.status = "cancelled";
     }
+    if (request.method === "decision_status")
+      result = { decisions: decisions.filter((d) => d.status === "open") };
+    // Only the /human route carries an action; /call carries a method.
+    if (request.action) {
+      humanCalls.push({ url: e.url, ...request });
+      const decision = decisions.find((d) => d.decisionId === request.decisionId);
+      decision.status = request.action === "decide" ? "resolved" : "withdrawn";
+      if (request.action === "decide")
+        decision.resolution = {
+          option: request.option
+            ? decision.options[Number(request.option) - 1]?.label ?? request.option
+            : undefined,
+          text: request.text,
+          surface: request.surface,
+        };
+      result = decision;
+    }
     if (request.method === "reply") {
       replyCalls.push(request.args);
       if (replyError.value)
@@ -338,6 +357,8 @@ function setup(on) {
     configureCalls,
     migrateCalls,
     replyCalls,
+    decisions,
+    humanCalls,
     replyError,
     processCommands,
     configureResult,
@@ -2168,5 +2189,150 @@ test("question command context stays bounded under control characters and long i
   expect(text).not.toContain("MALICIOUS");
   expect(text).not.toContain("\x1b[31m");
   expect(text.length).toBeLessThan(5000 + 2000 + 3000);
+  await pane.unmount();
+});
+
+function openDecision(env, extra = {}) {
+  const decision = {
+    decisionId: `dec_${String(env.decisions.length + 1).padStart(8, "0")}-0000-0000-0000-000000000000`,
+    question: "Which store should the runtime use?",
+    options: [
+      { label: "sqlite", tradeoff: "durable, one more native module" },
+      { label: "json", tradeoff: "simple, slow at scale" },
+    ],
+    allowFreeText: false,
+    status: "open",
+    openedBy: "coordinator",
+    ...extra,
+  };
+  env.decisions.push(decision);
+  return decision;
+}
+
+test("open decisions show first with numbered options and trade-offs; a button resolves through /human", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  const decision = openDecision(env);
+  await $.command.run({ command: "workers", args: "" });
+  const pane = await mountInspector($);
+  const text = await paneAllText(pane);
+  expect(text).toContain("INPUT REQUIRED · decisions only you can make");
+  expect(text).toContain("00000001 · Which store should the runtime use?");
+  const first = await pane.find({
+    type: "Button",
+    key: `workers-decision-${decision.decisionId}-1`,
+  });
+  expect(first.props.label).toBe("1 · sqlite — durable, one more native module");
+  expect(
+    await pane.find({ type: "Input", key: `worker-decision-text-${decision.decisionId}` }),
+  ).toBeUndefined();
+  await pane.press({ key: `workers-decision-${decision.decisionId}-2` });
+  expect(env.humanCalls.at(-1)).toMatchObject({
+    action: "decide",
+    decisionId: decision.decisionId,
+    option: "2",
+    surface: "mod-button",
+  });
+  expect(env.requests.some((r) => r.method && /decide|resolve|withdraw/.test(r.method))).toBe(false);
+  await pane.unmount();
+  const after = await mountInspector($);
+  expect(await paneAllText(after)).not.toContain("decisions only you can make");
+  await after.unmount();
+});
+
+test("free text appears only when allowed and submits as mod-button", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  const decision = openDecision(env, { allowFreeText: true });
+  await $.command.run({ command: "workers", args: "" });
+  const pane = await mountInspector($);
+  expect(
+    await pane.find({ type: "Input", key: `worker-decision-text-${decision.decisionId}` }),
+  ).toBeDefined();
+  await pane.press({ key: `workers-decision-submit-${decision.decisionId}` });
+  expect(env.humanCalls).toEqual([]);
+  await pane.input({
+    key: `worker-decision-text-${decision.decisionId}`,
+    text: "  neither, ask me later  ",
+    kind: "change",
+  });
+  await pane.press({ key: `workers-decision-submit-${decision.decisionId}` });
+  expect(env.humanCalls.at(-1)).toMatchObject({
+    action: "decide",
+    text: "neither, ask me later",
+    surface: "mod-button",
+  });
+  await pane.unmount();
+});
+
+test("/workers decide and withdraw use the /human route with the mod-command surface", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  const first = openDecision(env);
+  const second = openDecision(env);
+  // A list position is not an ID: numbers must not shift onto another question.
+  const positional = await $.command.run({ command: "workers", args: "decide 1 json" });
+  expect(positional.text).toBe("No open decision 1.");
+  const decided = await $.command.run({ command: "workers", args: "decide 00000001 json" });
+  expect(decided.text).toBe("Decided: json.");
+  expect(env.humanCalls.at(-1)).toMatchObject({
+    action: "decide",
+    decisionId: first.decisionId,
+    option: "json",
+    surface: "mod-command",
+  });
+  const withdrawn = await $.command.run({
+    command: "workers",
+    args: `withdraw ${second.decisionId}`,
+  });
+  expect(withdrawn.text).toContain("withdrawn");
+  expect(env.humanCalls.at(-1)).toMatchObject({
+    action: "withdraw",
+    decisionId: second.decisionId,
+    surface: "mod-command",
+  });
+  const missing = await $.command.run({ command: "workers", args: "decide 00000001 json" });
+  expect(missing.text).toBe("No open decision 00000001.");
+  openDecision(env, { decisionId: "dec_00000009-0000-0000-0000-000000000000" });
+  openDecision(env, { decisionId: "dec_00000009-1111-0000-0000-000000000000" });
+  const ambiguous = await $.command.run({ command: "workers", args: "decide 00000009 json" });
+  expect(ambiguous.text).toContain("ambiguous");
+  const help = await $.command.run({ command: "workers", args: "help" });
+  expect(help.text).toContain("/workers decide <id> <option>");
+});
+
+test("decisions and a blocked task question keep their own controls side by side", async ($, on) => {
+  const env = setup(on);
+  await start($);
+  const decision = openDecision(env);
+  await dispatch($, env, {
+    ...env.task,
+    taskId: "task_permission",
+    agentSessionId: "conversation_permission",
+    workerName: "devin-authentication",
+    status: "blocked_on_input",
+    description: "Authentication fix",
+    question: {
+      questionId: "q_perm",
+      kind: "permission",
+      summary: "Allow?",
+      options: [
+        { optionId: "allow-1", kind: "allow_once", name: "Allow once" },
+        { optionId: "reject-1", kind: "reject_once", name: "Reject" },
+      ],
+    },
+  });
+  await $.command.run({ command: "workers", args: "devin-authentication" });
+  const pane = await mountInspector($);
+  expect(
+    await pane.find({ type: "Button", key: `workers-decision-${decision.decisionId}-1` }),
+  ).toBeDefined();
+  await pane.press({ key: "workers-question-allow-1" });
+  expect(env.replyCalls.at(-1)).toEqual({
+    taskId: "task_permission",
+    questionId: "q_perm",
+    optionId: "allow-1",
+  });
+  expect(env.humanCalls).toEqual([]);
   await pane.unmount();
 });

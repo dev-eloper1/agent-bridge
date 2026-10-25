@@ -107,7 +107,7 @@ export class SqliteStorage implements StoragePort {
     for (const row of this.db
       .prepare("SELECT kind, id, json FROM entities")
       .all()) {
-      const kind = row.kind as "tasks" | "sessions" | "triggers";
+      const kind = row.kind as "tasks" | "sessions" | "triggers" | "decisions";
       (state[kind] ??= {} as never)[row.id as string] = JSON.parse(
         row.json as string,
       );
@@ -124,7 +124,7 @@ export class SqliteStorage implements StoragePort {
       const remove = this.db.prepare(
         "DELETE FROM entities WHERE kind = ? AND id = ?",
       );
-      for (const kind of ["tasks", "sessions", "triggers"] as const) {
+      for (const kind of ["tasks", "sessions", "triggers", "decisions"] as const) {
         const values = state[kind] ?? {};
         for (const row of this.db
           .prepare("SELECT id FROM entities WHERE kind = ?")
@@ -134,7 +134,7 @@ export class SqliteStorage implements StoragePort {
         for (const [id, value] of Object.entries(values))
           upsert.run(kind, id, JSON.stringify(value));
       }
-      const { tasks, sessions, triggers, events, ...metadata } = state;
+      const { tasks, sessions, triggers, decisions, events, ...metadata } = state;
       const json = JSON.stringify({
         ...metadata,
         ...(triggers ? { triggers: {} } : {}),

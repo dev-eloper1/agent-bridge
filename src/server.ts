@@ -55,12 +55,21 @@ export async function serve(config: Config) {
         streamEvents(runtime.store, res, since);
         return;
       }
-      if (req.method !== "POST" || req.url !== "/call")
+      const human = req.method === "POST" && req.url === "/human";
+      if (!human && (req.method !== "POST" || req.url !== "/call"))
         throw Error("Use POST /call");
       let body = "";
       for await (const chunk of req) {
         body += chunk;
         if (Buffer.byteLength(body) > 65536) throw Error("Request too large");
+      }
+      // Resolve or withdraw a decision. Only the Mod pane calls this route;
+      // MCP tools go through /call and cannot reach it.
+      if (human) {
+        const result = runtime.human(JSON.parse(body));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ result }));
+        return;
       }
       const { method, args } = JSON.parse(body);
       if (method === "shutdown") {

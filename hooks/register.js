@@ -22,7 +22,10 @@ let workspaceCwd,
   settingsNotice,
   settingsChoicePages = {},
   questionDrafts = {},
-  questionErrors = {};
+  questionErrors = {},
+  decisions = [],
+  decisionDrafts = {},
+  decisionErrors = {};
 const MAX_NATIVE_SELECT_OPTIONS = 64;
 const SETTINGS_CHOICE_PAGE_SIZE = 60;
 const terminal = (s) =>
@@ -296,6 +299,30 @@ async function replyToQuestion($, task, payload) {
     $.ui.invalidate("ui.render");
   }
 }
+const shortDecisionId = (d) => d.decisionId.slice(4, 12);
+// Decisions are settled only through the runtime's /human route, never /call.
+async function settleDecision($, decisionId, payload, surface) {
+  try {
+    const response = await $.http.fetch("http://agent-bridge/human", {
+      method: "POST",
+      socketPath: socket,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, decisionId, surface }),
+    });
+    const body = JSON.parse(response.text);
+    if (!response.ok || body.error)
+      throw Error(body.error ?? "Worker runtime unavailable");
+    decisions = decisions.filter((d) => d.decisionId !== decisionId);
+    delete decisionDrafts[decisionId];
+    delete decisionErrors[decisionId];
+    $.ui.invalidate("ui.render");
+    return body.result;
+  } catch (error) {
+    decisionErrors[decisionId] = plain(error.message, 300);
+    $.ui.invalidate("ui.render");
+    throw error;
+  }
+}
 async function call($, method, args = {}) {
   const response = await $.http.fetch("http://agent-bridge/call", {
     method: "POST",
@@ -382,6 +409,11 @@ async function refresh($, notify) {
   polling = true;
   try {
     roster = await call($, "list");
+    try {
+      decisions = (await call($, "decision_status", {}))?.decisions ?? [];
+    } catch {
+      decisions = [];
+    }
     // Associate a foreground call while it is still open, before it returns a task ID.
     for (const pending of Object.values(inFlight)) {
       const task = roster
@@ -573,6 +605,8 @@ async function handleWorkersCommand($, e) {
           "/workers next / prev — page output\n" +
           "/workers attention — jump to a worker needing input\n" +
           "/workers cancel — cancel the selected task\n" +
+          "/workers decide <id> <option> — answer a decision (short ID; option number or label)\n" +
+          "/workers withdraw <id> — withdraw a decision; work waiting on it fails\n" +
           "/workers dashboard — dashboard URL\n" +
           "/workers close — close the pane\n" +
           "/workers stop — interrupts active work and stops the runtime",
@@ -645,6 +679,41 @@ async function handleWorkersCommand($, e) {
     )
       return { text: "Navigation superseded." };
     const rows = visibleTasks();
+    const decisionCommand = /^(decide|withdraw)\s+(\S+)(?:\s+(.+))?$/s.exec(
+      argument,
+    );
+    if (decisionCommand) {
+      const [, action, ref, answer] = decisionCommand;
+      // Match the fixed short ID shown in the pane (or the full ID), never a
+      // list position that can shift when another decision closes.
+      const matches = decisions.filter(
+        (d) => d.decisionId === ref || shortDecisionId(d) === ref,
+      );
+      if (matches.length > 1)
+        return { text: `Short ID ${plain(ref, 60)} is ambiguous; use the full ID.` };
+      const decision = matches[0];
+      if (!decision) return { text: `No open decision ${plain(ref, 60)}.` };
+      if (action === "decide" && !answer?.trim())
+        return { text: "Use /workers decide <id> <option number or label>." };
+      try {
+        const settled = await settleDecision(
+          $,
+          decision.decisionId,
+          action === "decide"
+            ? { action, option: plain(answer, 60).trim() }
+            : { action },
+          "mod-command",
+        );
+        return {
+          text:
+            action === "decide"
+              ? `Decided: ${plain(settled.resolution?.option, 60)}.`
+              : "Decision withdrawn; work waiting on it will not run.",
+        };
+      } catch (error) {
+        return { text: plain(error.message, 300) };
+      }
+    }
     if (argument === "back") {
       argument =
         state.screen === "history" && state.selected ? state.selected : "";
@@ -797,6 +866,9 @@ export function register(on) {
     settingsChoicePages = {};
     questionDrafts = {};
     questionErrors = {};
+    decisions = [];
+    decisionDrafts = {};
+    decisionErrors = {};
     key = "agent-bridge:" + (await $.session.id());
     try {
       composerHasDraft = Boolean((await $.prompt.read()).text);
@@ -1043,7 +1115,95 @@ export function register(on) {
           ]
         : []),
     ];
+    const decisionBox = decisions.length
+      ? [
+          {
+            type: "Box",
+            props: {
+              key: "worker-decisions",
+              flexDirection: "column",
+              borderStyle: "round",
+              borderColor: "yellow",
+              paddingX: 1,
+            },
+            children: [
+              text("INPUT REQUIRED · decisions only you can make", {
+                color: "yellow",
+                bold: true,
+              }),
+              ...decisions.flatMap((d) => [
+                text(`${shortDecisionId(d)} · ${plain(d.question, 500)}`, {
+                  bold: true,
+                  wrap: "wrap",
+                }),
+                ...d.options.map((o, n) =>
+                  ui.Button({
+                    key: `workers-decision-${d.decisionId}-${n + 1}`,
+                    label: `${n + 1} · ${plain(o.label, 60)} — ${plain(o.tradeoff, 200)}`,
+                    onPress: async () =>
+                      settleDecision(
+                        $,
+                        d.decisionId,
+                        { action: "decide", option: String(n + 1) },
+                        "mod-button",
+                      ).catch(() => {}),
+                  }),
+                ),
+                ...(d.allowFreeText && pickers && ui.Input
+                  ? [
+                      ui.Input({
+                        key: `worker-decision-text-${d.decisionId}`,
+                        label: "Other answer",
+                        value: decisionDrafts[d.decisionId] ?? "",
+                        onInput: async (value) => {
+                          decisionDrafts[d.decisionId] = plain(value, 2000);
+                          $.ui.invalidate("ui.render");
+                        },
+                        onSubmit: async (value) => {
+                          const answer = plain(value, 2000).trim();
+                          if (answer)
+                            await settleDecision(
+                              $,
+                              d.decisionId,
+                              { action: "decide", text: answer },
+                              "mod-button",
+                            ).catch(() => {});
+                        },
+                      }),
+                      ui.Button({
+                        key: `workers-decision-submit-${d.decisionId}`,
+                        label: "Submit answer",
+                        dimColor: !(decisionDrafts[d.decisionId] ?? "").trim(),
+                        onPress: async () => {
+                          const answer = (
+                            decisionDrafts[d.decisionId] ?? ""
+                          ).trim();
+                          if (answer)
+                            await settleDecision(
+                              $,
+                              d.decisionId,
+                              { action: "decide", text: answer },
+                              "mod-button",
+                            ).catch(() => {});
+                        },
+                      }),
+                    ]
+                  : []),
+                ...(decisionErrors[d.decisionId]
+                  ? [
+                      text(plain(decisionErrors[d.decisionId], 300), {
+                        color: "red",
+                        wrap: "wrap",
+                      }),
+                    ]
+                  : []),
+              ]),
+            ],
+          },
+        ]
+      : [];
     const navigation = [
+      ...decisionBox,
       {
         type: "Box",
         props: {
