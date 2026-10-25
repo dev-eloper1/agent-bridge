@@ -128,7 +128,35 @@ export interface Task {
     paths?: string[];
   }[];
 }
+export type EventKind =
+  | "task.queued"
+  | "task.started"
+  | "task.needs_input"
+  | "task.completed"
+  | "task.failed"
+  | "task.cancelled"
+  | "verification.result"
+  | "task.updated";
+
+export function eventKind(type: string): EventKind {
+  if (type === "task.question" || type === "task.blocked")
+    return "task.needs_input";
+  if (type.startsWith("verification.")) return "verification.result";
+  if (type === "task.timed_out") return "task.failed";
+  switch (type) {
+    case "task.queued":
+    case "task.started":
+    case "task.completed":
+    case "task.failed":
+    case "task.cancelled":
+      return type;
+    default:
+      return "task.updated";
+  }
+}
+
 export interface Event {
+  kind?: EventKind;
   eventId: string;
   cursor: number;
   taskId: string;
@@ -261,6 +289,7 @@ export class Store {
   readonly artifactRoot: string;
   private readonly storage: StoragePort;
   private closed = false;
+  private readonly listeners = new Set<() => void>();
   constructor(
     readonly dir: string,
     readonly maxBytes: number,
@@ -331,6 +360,13 @@ export class Store {
   save() {
     if (this.closed) throw Error("Store storage is not open");
     this.storage.persist(this.state);
+    for (const listener of this.listeners) listener();
+  }
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
   readEventsSince(sequence: number) {
     return this.storage.readEventsSince(sequence);
@@ -440,6 +476,7 @@ export class Store {
   }
   event(t: Task, type: string, summary: string, requiresReply = false) {
     this.state.events.push({
+      kind: eventKind(type),
       eventId: uid("evt"),
       cursor: this.state.events.length + 1,
       taskId: t.taskId,
@@ -450,7 +487,12 @@ export class Store {
       requiresReply,
       artifactRefs: [`artifact://${t.taskId}/transcript.jsonl`],
     });
-    this.save();
+    try {
+      this.save();
+    } catch (error) {
+      this.state.events.pop();
+      throw error;
+    }
   }
   task(taskId: string) {
     const t = this.state.tasks[taskId];

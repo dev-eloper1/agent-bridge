@@ -10,6 +10,7 @@ import {
 import path from "node:path";
 import type { Config } from "./config.js";
 import { Runtime } from "./runtime.js";
+import { streamEvents } from "./event-stream.js";
 export async function serve(config: Config) {
   process.umask(0o077);
   mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
@@ -40,8 +41,20 @@ export async function serve(config: Config) {
     rmSync(lock, { recursive: true });
     throw e;
   }
+  const watchers = new Set<http.ServerResponse>();
   const server = http.createServer(async (req, res) => {
     try {
+      const url = new URL(req.url ?? "/", "http://localhost");
+      if (req.method === "GET" && url.pathname === "/events") {
+        const value = url.searchParams.get("since") ?? "0";
+        const since = Number(value);
+        if (!/^\d+$/.test(value) || !Number.isSafeInteger(since))
+          throw Error("since must be a nonnegative safe integer");
+        watchers.add(res);
+        res.once("close", () => watchers.delete(res));
+        streamEvents(runtime.store, res, since);
+        return;
+      }
       if (req.method !== "POST" || req.url !== "/call")
         throw Error("Use POST /call");
       let body = "";
@@ -87,6 +100,7 @@ export async function serve(config: Config) {
   const stop = () => {
     if (stopping) return;
     stopping = true;
+    for (const watcher of watchers) watcher.destroy();
     const closed = runtime.close().catch((error) => {
       console.error(
         `Agent Bridge: shutdown failed: ${runtime.sanitize(String(error))}`,

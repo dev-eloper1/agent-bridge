@@ -1033,13 +1033,22 @@ export class Runtime {
         const deadline = Date.now() + a.timeoutMs;
         if (!a.taskIds === !a.label)
           throw Error("Use exactly one of taskIds or label");
+        const watched = (): Task[] =>
+          a.label
+            ? Object.values(this.store.state.tasks).filter((t) =>
+                t.labels?.includes(a.label),
+              )
+            : a.taskIds.map((id: string) => this.store.task(id));
+        const initial = new Map(watched().map((t) => [t.taskId, t.status]));
+        const changed = () =>
+          watched().some((t) => initial.get(t.taskId) !== t.status);
         while (true) {
           if (this.closed) throw Error("Runtime closed");
           if (a.label) {
             const group = this.labelGroup(a.label);
             if (!group.total) throw Error("No tasks with this label");
             const timedOut = Date.now() >= deadline;
-            if (group.open === 0 || timedOut)
+            if (group.open === 0 || changed() || timedOut)
               return {
                 tasks: group.tasks.map((t) => this.lean(t)),
                 timedOut,
@@ -1058,6 +1067,7 @@ export class Runtime {
                 (t: Task) =>
                   terminal(t.status) || t.status === "blocked_on_input",
               ) ||
+              changed() ||
               Date.now() >= deadline
             )
               return {
@@ -1065,7 +1075,17 @@ export class Runtime {
                 timedOut: Date.now() >= deadline,
               };
           }
-          await new Promise((r) => setTimeout(r, 50));
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              clearTimeout(timer);
+              unsubscribe();
+              resolve();
+            };
+            const unsubscribe = this.store.subscribe(() => {
+              if (changed() || this.closed) done();
+            });
+            const timer = setTimeout(done, Math.max(0, deadline - Date.now()));
+          });
         }
       }
       case "status":
