@@ -30,16 +30,6 @@ function fixture() {
   return loadConfig(file);
 }
 const terminal = ["completed", "failed", "cancelled", "timed_out"];
-// wait now returns on intermediate state changes; these scenarios need a settled group.
-async function settledGroup(r, label) {
-  const deadline = Date.now() + 8000;
-  while (true) {
-    const result = await r.call("wait", { label, timeoutMs: Math.max(0, deadline - Date.now()) });
-    if (result.timedOut || result.group.total === Object.entries(result.group.byStatus)
-      .filter(([status]) => terminal.includes(status))
-      .reduce((sum, [, count]) => sum + count, 0)) return result;
-  }
-}
 test("lab: labels filter events, parentTaskId persists, wait-by-label settles the group", async () => {
   const r = new Runtime(fixture());
   try {
@@ -47,7 +37,7 @@ test("lab: labels filter events, parentTaskId persists, wait-by-label settles th
     const child = await r.call("spawn", { agentId: "one", prompt: "ping", labels: ["exp-a", "x2"], parentTaskId: parent.taskId });
     const other = await r.call("spawn", { agentId: "one", prompt: "ping", labels: ["exp-b"] });
     assert.equal(child.parentTaskId, parent.taskId);
-    const waited = await settledGroup(r, "exp-a");
+    const waited = await r.call("wait", { label: "exp-a", timeoutMs: 8000 });
     assert.equal(waited.timedOut, false);
     assert.equal(waited.tasks.length, 2);
     assert.ok(waited.tasks.every((t) => terminal.includes(t.status) || t.status === "blocked_on_input"));
@@ -85,7 +75,7 @@ test("lab: wait-by-label is not capped at 10 task ids", async () => {
   const r = new Runtime(fixture());
   try {
     for (let i = 0; i < 12; i++) await r.call("spawn", { agentId: "one", prompt: "ping", labels: ["bulk"] });
-    const w = await settledGroup(r, "bulk");
+    const w = await r.call("wait", { label: "bulk", timeoutMs: 8000 });
     assert.equal(w.timedOut, false);
     assert.equal(w.tasks.length, 10);
     assert.deepEqual(
@@ -129,7 +119,7 @@ test("lab: persisted labels/parentTaskId are validated on reload", async () => {
   let id;
   try {
     id = (await r.call("spawn", { agentId: "one", prompt: "ping", labels: ["ok"] })).taskId;
-    await settledGroup(r, "ok");
+    await r.call("wait", { label: "ok", timeoutMs: 8000 });
   } finally {
     r.close();
   }

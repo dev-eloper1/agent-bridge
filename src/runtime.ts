@@ -12,6 +12,7 @@ import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv
 import { agentConcurrency, type Config } from "./config.js";
 import {
   Store,
+  eventKind,
   uid,
   now,
   terminal,
@@ -1033,22 +1034,17 @@ export class Runtime {
         const deadline = Date.now() + a.timeoutMs;
         if (!a.taskIds === !a.label)
           throw Error("Use exactly one of taskIds or label");
-        const watched = (): Task[] =>
-          a.label
-            ? Object.values(this.store.state.tasks).filter((t) =>
-                t.labels?.includes(a.label),
-              )
-            : a.taskIds.map((id: string) => this.store.task(id));
-        const initial = new Map(watched().map((t) => [t.taskId, t.status]));
-        const changed = () =>
-          watched().some((t) => initial.get(t.taskId) !== t.status);
         while (true) {
           if (this.closed) throw Error("Runtime closed");
           if (a.label) {
             const group = this.labelGroup(a.label);
             if (!group.total) throw Error("No tasks with this label");
             const timedOut = Date.now() >= deadline;
-            if (group.open === 0 || changed() || timedOut)
+            if (
+              group.open === 0 ||
+              group.byStatus.blocked_on_input > 0 ||
+              timedOut
+            )
               return {
                 tasks: group.tasks.map((t) => this.lean(t)),
                 timedOut,
@@ -1067,7 +1063,6 @@ export class Runtime {
                 (t: Task) =>
                   terminal(t.status) || t.status === "blocked_on_input",
               ) ||
-              changed() ||
               Date.now() >= deadline
             )
               return {
@@ -1081,9 +1076,7 @@ export class Runtime {
               unsubscribe();
               resolve();
             };
-            const unsubscribe = this.store.subscribe(() => {
-              if (changed() || this.closed) done();
-            });
+            const unsubscribe = this.store.subscribe(done);
             const timer = setTimeout(done, Math.max(0, deadline - Date.now()));
           });
         }
@@ -1113,7 +1106,8 @@ export class Runtime {
         const events = this.store.state.events
           .filter((e) => e.cursor > a.afterCursor)
           .filter((e) => !a.label || tasks[e.taskId]?.labels?.includes(a.label))
-          .slice(0, a.limit);
+          .slice(0, a.limit)
+          .map((event) => ({ ...event, kind: eventKind(event.type) }));
         return {
           events,
           nextCursor: events.at(-1)?.cursor ?? a.afterCursor,
