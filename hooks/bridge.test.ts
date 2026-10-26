@@ -393,6 +393,10 @@ function complete(env) {
 
 test("background completion notifies once without reopening the worker pane or copying report fragments", async ($, on) => {
   const env = setup(on);
+  on("ui.render", { component: "AbovePrompt" }, () => ({
+    type: "Text",
+    children: [],
+  }));
   await start($);
   await $.tool.call({
     tool: "mcp__plugin_agent-bridge_workers__agents_spawn",
@@ -403,11 +407,38 @@ test("background completion notifies once without reopening the worker pane or c
   await env.clock.advance(2100);
   await env.clock.settle();
   expect(env.submitted.length).toBe(1);
+  expect(env.submitted[0]).toContain(
+    "WORKER UPDATE — devin-review-repository · finished",
+  );
   expect(env.submitted[0]).toContain("task_123");
   expect(env.submitted[0]).not.toContain("CHOPPED_REPORT_FRAGMENT");
   expect(env.toasts.map((toast) => toast.text)).toEqual([
     "devin-review-repository · finished",
   ]);
+  const band = await $.ui.mount({
+    plugin: "agent-bridge",
+    surface: "terminal",
+    component: "AbovePrompt",
+    requestId: "worker-update",
+    props: {
+      hasSurvey: false,
+      isWorking: false,
+      maxRows: 8,
+      bodyColumns: 65,
+      scroll: {},
+      view: {},
+    },
+  });
+  const bandText = (await band.findAll({ type: "Text" }))
+    .map((e) => e.text)
+    .join("\n");
+  expect(bandText).toContain("WORKER UPDATE");
+  expect(bandText).toContain("devin-review-repository · finished");
+  expect(
+    (await band.find({ type: "Button", key: "worker-update-open" }))?.props
+      .label,
+  ).toBe("Open devin-review-repository");
+  await band.unmount();
   await env.clock.advance(2100);
   expect(env.submitted.length).toBe(1);
 });
@@ -562,7 +593,16 @@ test("automatic inline activity shows actual tools and files, preserves other ba
     },
   });
   expect(
-    await finished.find({ type: "Text", text: /devin-review-repository/ }),
+    (await finished.find({ type: "Text", text: "WORKER UPDATE" }))?.props.bold,
+  ).toBe(true);
+  expect(
+    await finished.find({
+      type: "Text",
+      text: "devin-review-repository · finished",
+    }),
+  ).toBeDefined();
+  expect(
+    await finished.find({ type: "Button", key: "worker-open-output" }),
   ).toBeUndefined();
   await finished.unmount();
 });
@@ -842,6 +882,9 @@ test("two workers can be selected independently and cancelling one preserves the
   expect(overview.text).toContain(
     "devin-review-repository · Review repository",
   );
+  expect(overview.text.indexOf("pi-check-documentation")).toBeLessThan(
+    overview.text.indexOf("devin-review-repository"),
+  );
   await $.command.run({ command: "workers", args: "pi-check-documentation" });
   expect(await paneText($)).toContain("pi · Check documentation");
   await $.command.run({ command: "workers", args: "cancel" });
@@ -1117,7 +1160,7 @@ test("overview exposes work previews and attention counts; search never hides wo
   await filtered.unmount();
   expect(await paneText($)).toContain("PUBLIC_START");
   const detail = await mountInspector($);
-  await detail.press({ key: "workers-next-worker" });
+  await detail.press({ key: "workers-previous-worker" });
   await detail.unmount();
   expect(await paneText($)).toContain("Authentication fix");
   expect(env.task.status).toBe("completed");
