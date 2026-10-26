@@ -260,8 +260,8 @@ test(
     };
     const runtime = new Runtime(c);
     // Hooks run in registration order: close before removing persisted state.
-    t.after(() => {
-      runtime.close();
+    t.after(async () => {
+      await runtime.close();
       rmSync(dir, { recursive: true, force: true });
     });
     const task = await runtime.call("spawn", {

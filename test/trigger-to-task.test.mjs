@@ -39,8 +39,8 @@ function fixture(t) {
     runtimes.push(r);
     return r;
   };
-  t.after(() => {
-    for (const r of runtimes) if (!r.closed) r.close();
+  t.after(async () => {
+    for (const r of runtimes) await r.close();
     rmSync(dir, { recursive: true, force: true });
   });
   return {
@@ -107,7 +107,7 @@ test("lab: event dedupe survives reload and concurrent duplicate calls", async (
   );
   assert.equal(tasks(r).length, 1);
   await completed(r, tasks(r)[0].taskId);
-  r.close();
+  await r.close();
   r = f.reload();
   assert.equal(
     (await r.triggers.fireEvent(trigger.id, "event-1")).outcome,
@@ -151,14 +151,14 @@ test("lab: downtime catches up at most once and persisted skip policy still appl
   const f = fixture(t);
   let r = f.reload();
   const trigger = r.triggers.create(definition());
-  r.close();
+  await r.close();
   f.advance(1000 * 10000);
   r = f.reload();
   await r.triggers.tick();
   await r.triggers.tick();
   assert.equal(tasks(r).length, 1);
   assert.equal(r.triggers.list()[0].id, trigger.id);
-  r.close();
+  await r.close();
   f.advance(5000);
   r = f.reload();
   await r.triggers.tick();
@@ -191,13 +191,13 @@ test("lab: bounds, agent/prompt/workspace validation, disable and remove persist
   assert.throws(() => r.triggers.delete("toString"), /Unknown/);
   r.triggers.delete(timer.id);
   assert.throws(() => r.triggers.delete(timer.id), /Unknown/);
-  r.close();
+  await r.close();
   r = f.reload();
   assert.equal(r.triggers.list().length, 1);
   assert.equal(r.triggers.list()[0].enabled, false);
   for (let i = 1; i < MAX_TRIGGERS; i++) r.triggers.create(definition("event"));
   assert.throws(() => r.triggers.create(definition("event")), /limit/);
-  r.close();
+  await r.close();
   await r.triggers.tick();
   assert.equal(tasks(r).length, 0);
 });
@@ -211,7 +211,7 @@ test("lab: runtime start owns scheduler tick and close stops it", async (t) => {
   r.start();
   assert.equal(tasks(r).length, 1);
   await completed(r, tasks(r)[0].taskId);
-  r.close();
+  await r.close();
   f.advance(1000);
   await r.triggers.tick();
   assert.equal(tasks(r).length, 1);
@@ -237,7 +237,7 @@ test("lab repair: per-trigger rolling fire cap records reason and survives reloa
   const skipped = await r.triggers.fireEvent(trigger.id, "c");
   assert.deepEqual(skipped, { outcome: "skipped", reason: "trigger_fire_cap" });
   assert.equal(tasks(r).length, 2);
-  r.close();
+  await r.close();
   r = f.reload();
   assert.equal(
     (await r.triggers.fireEvent(trigger.id, "d")).reason,
@@ -277,7 +277,7 @@ test("lab repair: aggregate fire cap bounds concurrent storm and survives deleti
   for (const task of tasks(r))
     r.finish(task, "completed", "synthetic aggregate fixture completion");
   for (const tr of triggers) r.triggers.delete(tr.id);
-  r.close();
+  await r.close();
   r = f.reload();
   const fresh = r.triggers.create(definition("event"));
   assert.equal(
@@ -317,7 +317,7 @@ test("lab repair: three real mock failures auto-disable, with streak persisted a
     r.triggers.taskFinished(task); // Duplicate notification must not double-count.
     assert.equal(r.triggers.list()[0].consecutiveFailures, i);
     if (i === 2) {
-      r.close();
+      await r.close();
       r = f.reload();
     }
   }
@@ -328,7 +328,7 @@ test("lab repair: three real mock failures auto-disable, with streak persisted a
     "disabled",
   );
   assert.equal(tasks(r).length, 3);
-  r.close();
+  await r.close();
   r = f.reload();
   assert.equal(r.triggers.list()[0].enabled, false);
   assert.equal(r.triggers.list()[0].disabledReason, "consecutive_failures:3");
@@ -408,7 +408,7 @@ test("lab repair: queued legacy trigger task is tagged on reload before scheduli
   const fire = await r.triggers.fireEvent(tr.id, "legacy");
   delete r.store.task(fire.taskId).triggerId;
   r.store.save();
-  r.close();
+  await r.close();
   r = f.reload();
   r.config.runtime.maxConcurrentTasks = 1;
   r.schedule();

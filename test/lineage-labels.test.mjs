@@ -1,6 +1,7 @@
+import { Store } from "../dist/store.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -122,15 +123,18 @@ test("lab: persisted labels/parentTaskId are validated on reload", async () => {
   } finally {
     r.close();
   }
-  const file = path.join(config.runtime.stateDir, "state.json");
-  const good = readFileSync(file, "utf8");
+  const store = new Store(config.runtime.stateDir, 10000);
+  const good = JSON.stringify(store.state);
   for (const patch of [{ labels: "ok" }, { labels: ["Not OK"] }, { parentTaskId: id }]) {
     const s = JSON.parse(good);
     Object.assign(s.tasks[id], patch);
-    writeFileSync(file, JSON.stringify(s));
+    store.state = s;
+    store.save();
     assert.throws(() => new Runtime(config), /Invalid Agent Bridge state/, JSON.stringify(patch));
   }
-  writeFileSync(file, good);
+  store.state = JSON.parse(good);
+  store.save();
+  store.close();
   r = new Runtime(config);
   try {
     assert.deepEqual((await r.call("status", { taskId: id })).labels, ["ok"]);
