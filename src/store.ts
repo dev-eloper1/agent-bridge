@@ -70,6 +70,7 @@ export interface Task {
   summary: string;
   taskKey?: string;
   dependsOn?: string[];
+  waitsOnDecisions?: string[];
   labels?: string[];
   parentTaskId?: string;
   budgetLabel?: string;
@@ -136,7 +137,11 @@ export type EventKind =
   | "task.failed"
   | "task.cancelled"
   | "verification.result"
-  | "task.updated";
+  | "task.updated"
+  | "decision.opened"
+  | "decision.resolved"
+  | "decision.withdrawn"
+  | "decision.expired";
 
 export function eventKind(type: string): EventKind {
   if (type === "task.question" || type === "task.blocked")
@@ -149,6 +154,10 @@ export function eventKind(type: string): EventKind {
     case "task.completed":
     case "task.failed":
     case "task.cancelled":
+    case "decision.opened":
+    case "decision.resolved":
+    case "decision.withdrawn":
+    case "decision.expired":
       return type;
     default:
       return "task.updated";
@@ -159,7 +168,10 @@ export interface Event {
   kind?: EventKind;
   eventId: string;
   cursor: number;
-  taskId: string;
+  // Task events name a task; decision events name a decision and, when a
+  // task opened it, that task too.
+  taskId?: string;
+  decisionId?: string;
   agentId: string;
   type: string;
   timestamp: string;
@@ -167,7 +179,30 @@ export interface Event {
   requiresReply: boolean;
   artifactRefs: string[];
 }
+// A question only a person may answer. Models can open and read decisions;
+// resolution happens through the runtime's human route, never an MCP tool.
+export type DecisionStatus = "open" | "resolved" | "withdrawn" | "expired";
+export interface Decision {
+  decisionId: string;
+  question: string;
+  options: { label: string; tradeoff: string }[];
+  allowFreeText: boolean;
+  maxFreeTextChars?: number;
+  status: DecisionStatus;
+  openedBy: string;
+  createdAt: string;
+  expiresAt?: string;
+  resolution?: {
+    option?: string;
+    text?: string;
+    // Who the caller said it was. Not proof that a person answered: any
+    // local process running as the owner can reach the human route.
+    claimedSurface: string;
+    at: string;
+  };
+}
 export interface State {
+  decisions?: Record<string, Decision>;
   triggerBudget?: { fires: number[] };
   triggers?: Record<string, Trigger>;
   version: 1;
@@ -220,6 +255,24 @@ const storedState = z
     version: z.literal(1),
     triggers: z.record(storedTrigger).optional(),
     triggerBudget: z.object({ fires: z.array(z.number().finite()) }).optional(),
+    decisions: z
+      .record(
+        z
+          .object({
+            decisionId: z.string().regex(/^dec_[a-f0-9-]{36}$/),
+            question: z.string(),
+            options: z
+              .array(z.object({ label: z.string(), tradeoff: z.string() }))
+              .min(2)
+              .max(4),
+            allowFreeText: z.boolean(),
+            status: z.enum(["open", "resolved", "withdrawn", "expired"]),
+            openedBy: z.string(),
+            createdAt: z.string(),
+          })
+          .passthrough(),
+      )
+      .optional(),
     tasks: z.record(storedTask),
     sessions: z.record(
       z
@@ -248,7 +301,8 @@ const storedState = z
         .object({
           eventId: z.string(),
           cursor: z.number().int().positive(),
-          taskId: z.string(),
+          taskId: z.string().optional(),
+          decisionId: z.string().optional(),
           agentId: z.string(),
           type: z.string(),
           timestamp: z.string(),
@@ -261,6 +315,9 @@ const storedState = z
   })
   .passthrough()
   .superRefine((s, ctx) => {
+    for (const [key, decision] of Object.entries(s.decisions ?? {}))
+      if (key !== decision.decisionId)
+        ctx.addIssue({ code: "custom", message: "Invalid decision mapping" });
     for (const [key, task] of Object.entries(s.tasks))
       if (
         key !== task.taskId ||
@@ -276,12 +333,17 @@ const storedState = z
         });
     if (
       s.events.some(
-        (event, i) => event.cursor !== i + 1 || !s.tasks[event.taskId],
+        (event, i) =>
+          event.cursor !== i + 1 ||
+          (event.taskId !== undefined && !s.tasks[event.taskId]) ||
+          (event.decisionId !== undefined &&
+            !s.decisions?.[event.decisionId]) ||
+          (event.taskId === undefined && event.decisionId === undefined),
       )
     )
       ctx.addIssue({
         code: "custom",
-        message: "Invalid event sequence or task reference",
+        message: "Invalid event sequence or task/decision reference",
       });
   });
 export class Store {
@@ -495,6 +557,28 @@ export class Store {
       summary: summary.slice(0, 240),
       requiresReply,
       artifactRefs: [`artifact://${t.taskId}/transcript.jsonl`],
+    });
+    try {
+      this.save();
+    } catch (error) {
+      this.state.events.pop();
+      throw error;
+    }
+  }
+  decisionEvent(decision: Decision, type: string, summary: string) {
+    const opener = this.state.tasks[decision.openedBy];
+    this.state.events.push({
+      kind: eventKind(type),
+      eventId: uid("evt"),
+      cursor: this.state.events.length + 1,
+      ...(opener ? { taskId: opener.taskId } : {}),
+      decisionId: decision.decisionId,
+      agentId: opener?.agentId ?? "coordinator",
+      type,
+      timestamp: now(),
+      summary: summary.slice(0, 240),
+      requiresReply: type === "decision.opened",
+      artifactRefs: [],
     });
     try {
       this.save();

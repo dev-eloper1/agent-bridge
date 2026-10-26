@@ -19,6 +19,7 @@ import {
   type Task,
   type Session,
   type Status,
+  type Decision,
 } from "./store.js";
 import { Worker } from "./acp.js";
 import { resolveExecutable } from "./executables.js";
@@ -54,8 +55,24 @@ import {
 import { startDashboard } from "./dashboard.js";
 import { TriggerRegistry } from "./triggers.js";
 import { buildId } from "./build-id.js";
-import { buildHandoffPrompt } from "./handoff.js";
+import { buildHandoffPrompt, MAX_PROMPT_CHARS } from "./handoff.js";
 const taskId = z.string().regex(/^task_[a-f0-9-]{36}$/);
+const decisionId = z.string().regex(/^dec_[a-f0-9-]{36}$/);
+const MAX_DECISION_MS = 7 * 24 * 60 * 60 * 1000;
+// Decision text reaches the pane and the owner's terminal. Refuse control and
+// invisible formatting characters (escape sequences, zero-width, bidi), so
+// what the owner reads is what was stored.
+const unsafeText = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+const safeLine = (max: number) =>
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(max)
+    .refine((v) => !unsafeText.test(v), "must not contain control or invisible characters");
+// The form a person reads and types; labels must be distinct in this form.
+const displayKey = (v: string) =>
+  v.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
 // bounded, safe-charset group labels.
 const WAIT_LABEL_CAP = 10;
 const countTerminal = (byStatus: Record<string, number>) =>
@@ -115,6 +132,13 @@ export const inputs = {
         .optional()
         .describe(
           "Existing task IDs that must all complete before this task runs; any unsuccessful dependency fails this task",
+        ),
+      waitsOnDecisions: z
+        .array(decisionId)
+        .max(20)
+        .optional()
+        .describe(
+          "Decision IDs from agents_decision_open. The task stays queued until a person resolves each one; the choice is passed in as fenced input. A withdrawn or expired decision fails this task.",
         ),
       budgetLabel: z
         .string()
@@ -183,6 +207,59 @@ export const inputs = {
     })
     .strict(),
   cancel: z.object({ taskId }).strict(),
+  // Models may open and read decisions. Resolution is deliberately absent
+  // from inputs (every key here becomes an MCP tool); see Runtime.decide.
+  decision_open: z
+    .object({
+      question: z
+        .string()
+        .trim()
+        .min(1)
+        .max(1000)
+        .refine(
+          (v) => !unsafeText.test(v.replaceAll("\n", " ")),
+          "must not contain control or invisible characters",
+        ),
+      // Options are chosen by position or label, so a label must never look
+      // like a position or repeat another label.
+      options: z
+        .array(
+          z
+            .object({
+              label: safeLine(60).refine(
+                (l) => !/^\d+$/.test(displayKey(l)),
+                "label must not be a number",
+              ),
+              tradeoff: safeLine(200),
+            })
+            .strict(),
+        )
+        .min(2)
+        .max(4)
+        .refine(
+          (o) =>
+            new Set(o.map((x) => displayKey(x.label))).size === o.length,
+          "option labels must be distinct",
+        ),
+      allowFreeText: z.boolean().default(false),
+      maxFreeTextChars: z
+        .number()
+        .int()
+        .min(1)
+        .max(2000)
+        .default(500)
+        .describe("Longest free-text answer accepted; only with allowFreeText"),
+      openedBy: taskId.optional(),
+      expiresInMs: z.number().int().min(1).max(MAX_DECISION_MS).optional(),
+    })
+    .strict(),
+  decision_status: z
+    .object({
+      decisionId: decisionId
+        .optional()
+        .describe("Omit to list open decisions, oldest first"),
+    })
+    .strict(),
   wait: z
     .object({
       taskIds: z.array(taskId).min(1).max(10).optional(),
@@ -192,6 +269,22 @@ export const inputs = {
     .strict(),
 };
 type Method = keyof typeof inputs;
+// Human-only resolution. Kept out of `inputs` so no MCP tool is generated.
+export const humanSurface = z.enum(["mod-button", "mod-command"]);
+export const humanInput = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("decide"),
+      decisionId,
+      option: z.string().min(1).max(60).optional(),
+      text: z.string().min(1).max(2000).optional(),
+      surface: humanSurface,
+    })
+    .strict(),
+  z
+    .object({ action: z.literal("withdraw"), decisionId, surface: humanSurface })
+    .strict(),
+]);
 interface Active {
   verificationAbort?: AbortController;
   streaming: boolean;
@@ -219,6 +312,7 @@ export class Runtime {
   workerSessions = new Map<string, string>();
   active = new Map<string, Active>();
   questions = new Map<string, Question>();
+  private readonly decisionTimers = new Set<NodeJS.Timeout>();
   closed = false;
   private readonly pendingStorage = new Set<Promise<unknown>>();
   private closing?: Promise<void>;
@@ -244,6 +338,8 @@ export class Runtime {
       clock,
       () => this.closed,
     );
+    for (const decision of Object.values(this.store.state.decisions ?? {}))
+      this.armExpiry(decision);
     const sessions = Object.values(this.store.state.sessions);
     const reserved = new Set(
       sessions.flatMap((s) => (s.workerName ? [s.workerName] : [])),
@@ -317,6 +413,114 @@ export class Runtime {
   append(t: Task, name: string, value: string) {
     this.store.append(t.taskId, name, this.sanitize(value));
   }
+  // A decision as fenced input; `answer` is the real one at run time, or the
+  // longest one the decision accepts when budgeting at spawn time.
+  decisionInput(d: Decision, answer: string) {
+    const text = `Question: ${d.question}\nAnswer: ${answer}`;
+    return {
+      taskId: d.decisionId,
+      source: `decision:${d.decisionId}`,
+      status: "resolved",
+      text,
+      maxChars: text.length,
+    };
+  }
+  longestAnswer(d: Decision) {
+    return Math.max(
+      ...d.options.map((o) => o.label.length),
+      d.allowFreeText ? (d.maxFreeTextChars ?? 500) : 0,
+    );
+  }
+  // Expiry runs on a timer only; no tool or route can expire a decision early.
+  armExpiry(decision: Decision) {
+    if (decision.status !== "open" || !decision.expiresAt) return;
+    const timer = setTimeout(
+      () => {
+        this.decisionTimers.delete(timer);
+        if (this.closed || decision.status !== "open") return;
+        this.closeDecision(decision, "expired");
+      },
+      Math.max(0, Date.parse(decision.expiresAt) - Date.now()),
+    );
+    timer.unref();
+    this.decisionTimers.add(timer);
+  }
+  private closeDecision(
+    decision: Decision,
+    status: "resolved" | "withdrawn" | "expired",
+    resolution?: Decision["resolution"],
+  ) {
+    const previous = { ...decision };
+    decision.status = status;
+    if (resolution) decision.resolution = resolution;
+    try {
+      this.store.decisionEvent(
+        decision,
+        `decision.${status}`,
+        status === "resolved"
+          ? `Decided (claimed surface ${resolution?.claimedSurface}): ${resolution?.option ?? resolution?.text}`
+          : `Decision ${status}: ${decision.question}`,
+      );
+    } catch (error) {
+      Object.assign(decision, previous);
+      if (!previous.resolution) delete decision.resolution;
+      throw error;
+    }
+    this.schedule();
+  }
+  // Human-only path. Not in `inputs`, so it is never exposed as an MCP tool.
+  // The surface is whatever the caller claims and is recorded as such.
+  decide(a: { decisionId: string; option?: string; text?: string; surface: string }) {
+    if (this.closed) throw Error("Runtime closed");
+    const decision = this.store.state.decisions?.[a.decisionId];
+    if (!decision) throw Error("Unknown decision");
+    if (decision.status !== "open")
+      throw Error(`Decision is ${decision.status}`);
+    if (!/^[a-z][a-z0-9-]{0,39}$/.test(a.surface))
+      throw Error("surface must be a short lowercase name");
+    const at = now();
+    if (a.option !== undefined) {
+      const index = /^[1-4]$/.test(a.option) ? Number(a.option) - 1 : -1;
+      const match =
+        decision.options[index] ??
+        decision.options.find(
+          (o) => displayKey(o.label) === displayKey(a.option!),
+        );
+      if (!match) throw Error(`Unknown option: ${a.option}`);
+      this.closeDecision(decision, "resolved", {
+        option: match.label,
+        claimedSurface: a.surface,
+        at,
+      });
+    } else if (a.text !== undefined) {
+      if (!decision.allowFreeText)
+        throw Error("This decision does not accept free text");
+      const text = a.text.trim();
+      if (!text) throw Error("Answer text is empty");
+      const max = decision.maxFreeTextChars ?? 500;
+      if (text.length > max)
+        throw Error(`Answer is ${text.length} characters; this decision accepts at most ${max}`);
+      if (unsafeText.test(text.replaceAll("\n", " ")))
+        throw Error("Answer must not contain control or invisible characters");
+      this.closeDecision(decision, "resolved", { text, claimedSurface: a.surface, at });
+    } else throw Error("Pass option or text");
+    return decision;
+  }
+  // Entry point for the runtime's /human route (Mod pane only by convention;
+  // any local process that can reach the socket could call it).
+  human(raw: unknown) {
+    const a = humanInput.parse(raw);
+    return a.action === "decide" ? this.decide(a) : this.withdraw(a);
+  }
+  withdraw(a: { decisionId: string; surface: string }) {
+    if (this.closed) throw Error("Runtime closed");
+    const decision = this.store.state.decisions?.[a.decisionId];
+    if (!decision) throw Error("Unknown decision");
+    if (decision.status !== "open")
+      throw Error(`Decision is ${decision.status}`);
+    this.closeDecision(decision, "withdrawn", { claimedSurface: a.surface, at: now() });
+    return decision;
+  }
   dependencyReady(id: string) {
     const dependency = this.store.state.tasks[id];
     return (
@@ -339,13 +543,20 @@ export class Runtime {
     const waitingOnDependency =
       t.status === "queued" &&
       (t.dependsOn ?? []).some((id) => !this.dependencyReady(id));
+    const waitingOnDecision =
+      t.status === "queued" &&
+      (t.waitsOnDecisions ?? []).some(
+        (id) => this.store.state.decisions?.[id]?.status !== "resolved",
+      );
     const index = queued.findIndex((x) => x.taskId === t.taskId);
     return {
       queuePosition: index >= 0 ? index + 1 : undefined,
       queuedTasks: queued.length,
       activeTasks: this.active.size,
       concurrencyLimit: this.config.runtime.maxConcurrentTasks,
-      queueReason: waitingOnDependency
+      queueReason: waitingOnDecision
+        ? ("waiting_on_decision" as const)
+        : waitingOnDependency
         ? ("waiting_on_dependency" as const)
         : suppressed
           ? ("agent_waiting_for_permission" as const)
@@ -815,6 +1026,28 @@ export class Runtime {
         for (const dependencyId of a.dependsOn ?? [])
           if (!Object.hasOwn(this.store.state.tasks, dependencyId))
             throw Error(`Unknown dependency: ${dependencyId}`);
+        for (const id of a.waitsOnDecisions ?? []) {
+          const decision = this.store.state.decisions?.[id];
+          if (!decision) throw Error(`Unknown decision: ${id}`);
+          if (decision.status === "withdrawn" || decision.status === "expired")
+            throw Error(`Decision ${id} is ${decision.status}`);
+        }
+        // Reserve room for the longest answer now, so a person's valid answer
+        // can never push an accepted task over the prompt limit later.
+        if (a.waitsOnDecisions?.length)
+          try {
+            buildHandoffPrompt(
+              this.sanitize(handoffPrompt ?? a.prompt),
+              a.waitsOnDecisions.map((id: string) => {
+                const d = this.store.state.decisions![id];
+                return this.decisionInput(d, "x".repeat(this.longestAnswer(d)));
+              }),
+            );
+          } catch {
+            throw Error(
+              `Prompt plus the longest possible answers to waitsOnDecisions would exceed ${MAX_PROMPT_CHARS} characters; shorten the prompt or lower maxFreeTextChars`,
+            );
+          }
         if (a.budgetLabel) {
           const budget = this.config.runtime.taskBudgets?.[a.budgetLabel];
           if (!budget)
@@ -978,6 +1211,7 @@ export class Runtime {
           summary: "Queued",
           taskKey: a.taskKey,
           dependsOn: a.dependsOn,
+          waitsOnDecisions: a.waitsOnDecisions,
           labels: a.labels?.length ? [...new Set<string>(a.labels)] : undefined,
           parentTaskId: a.parentTaskId,
           budgetLabel: a.budgetLabel,
@@ -1105,7 +1339,7 @@ export class Runtime {
         const tasks = this.store.state.tasks;
         const events = this.store.state.events
           .filter((e) => e.cursor > a.afterCursor)
-          .filter((e) => !a.label || tasks[e.taskId]?.labels?.includes(a.label))
+          .filter((e) => !a.label || (e.taskId !== undefined && tasks[e.taskId]?.labels?.includes(a.label)))
           .slice(0, a.limit)
           .map((event) => ({ ...event, kind: eventKind(event.type) }));
         return {
@@ -1158,6 +1392,53 @@ export class Runtime {
           a.offset,
           Math.min(a.limit, this.config.runtime.maxInlineChars),
         );
+      }
+      case "decision_open": {
+        if (a.openedBy && !this.store.state.tasks[a.openedBy])
+          throw Error(`Unknown task: ${a.openedBy}`);
+        const createdAt = now();
+        const decision: Decision = {
+          decisionId: uid("dec"),
+          question: a.question,
+          options: a.options,
+          allowFreeText: a.allowFreeText,
+          ...(a.allowFreeText ? { maxFreeTextChars: a.maxFreeTextChars } : {}),
+          status: "open",
+          openedBy: a.openedBy ?? "coordinator",
+          createdAt,
+          ...(a.expiresInMs
+            ? {
+                expiresAt: new Date(
+                  Date.parse(createdAt) + a.expiresInMs,
+                ).toISOString(),
+              }
+            : {}),
+        };
+        const decisions = (this.store.state.decisions ??= {});
+        decisions[decision.decisionId] = decision;
+        try {
+          this.store.decisionEvent(
+            decision,
+            "decision.opened",
+            `Waiting for a person: ${decision.question}`,
+          );
+        } catch (error) {
+          delete decisions[decision.decisionId];
+          throw error;
+        }
+        this.armExpiry(decision);
+        return decision;
+      }
+      case "decision_status": {
+        if (!a.decisionId)
+          return {
+            decisions: Object.values(this.store.state.decisions ?? {}).filter(
+              (d) => d.status === "open",
+            ),
+          };
+        const decision = this.store.state.decisions?.[a.decisionId];
+        if (!decision) throw Error("Unknown decision");
+        return decision;
       }
       case "cancel": {
         const t = this.store.task(a.taskId);
@@ -1234,6 +1515,23 @@ export class Runtime {
           (dependency.verify && dependency.verification === "failed")
         );
       });
+      const closedId = t.waitsOnDecisions?.find((id) => {
+        const decision = this.store.state.decisions?.[id];
+        return (
+          !decision ||
+          decision.status === "withdrawn" ||
+          decision.status === "expired"
+        );
+      });
+      if (closedId) {
+        const decision = this.store.state.decisions?.[closedId];
+        this.finish(
+          t,
+          "failed",
+          `Decision ${closedId} was ${decision?.status ?? "missing"}; this task needed a person's answer`,
+        );
+        continue;
+      }
       if (failed) {
         const dependency = this.store.state.tasks[failed];
         const verification = dependency?.verify
@@ -1275,6 +1573,9 @@ export class Runtime {
       if (
         t.status === "queued" &&
         (t.dependsOn ?? []).every((id) => this.dependencyReady(id)) &&
+        (t.waitsOnDecisions ?? []).every(
+          (id) => this.store.state.decisions?.[id]?.status === "resolved",
+        ) &&
         agentActive < agentLimit &&
         !this.active.has(t.agentSessionId) &&
         !waitingPermission.has(t.agentId)
@@ -1564,6 +1865,17 @@ export class Runtime {
       s.models as { currentModelId?: string } | undefined
     )?.currentModelId;
     let prompt = this.store.readArtifactText(t.taskId, "prompt.txt");
+    if (t.waitsOnDecisions?.length)
+      prompt = buildHandoffPrompt(
+        prompt,
+        t.waitsOnDecisions.map((id) => {
+          const d = this.store.state.decisions![id];
+          return this.decisionInput(
+            d,
+            d.resolution?.option ?? d.resolution?.text ?? "",
+          );
+        }),
+      );
     const pinned = s.template ?? s.specialistSnapshot;
     const pinnedId = s.template
       ? s.template.id
@@ -1880,6 +2192,8 @@ export class Runtime {
   close(): Promise<void> {
     if (this.closing) return this.closing;
     clearInterval(this.triggerTimer);
+    for (const timer of this.decisionTimers) clearTimeout(timer);
+    this.decisionTimers.clear();
     this.dashboardServer?.server.close();
     this.closed = true;
     let shutdownError: unknown;
