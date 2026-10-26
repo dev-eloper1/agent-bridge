@@ -4,6 +4,7 @@ function setup(on) {
     opened = [],
     events = [],
     notices = [],
+    toasts = [],
     focused = [],
     invalidated = [],
     statuses = [];
@@ -79,6 +80,10 @@ function setup(on) {
   on("ui.close", () => ({ value: undefined }));
   on("ui.notice", (_, e) => {
     notices.push(e);
+    return { value: undefined };
+  });
+  on("ui.toast", (_, e) => {
+    toasts.push(e);
     return { value: undefined };
   });
   on("ui.invalidate", (_, e) => {
@@ -323,6 +328,7 @@ function setup(on) {
     events,
     task,
     notices,
+    toasts,
     allTasks,
     dispatches,
     outputs,
@@ -399,6 +405,9 @@ test("background completion notifies once without reopening the worker pane or c
   expect(env.submitted.length).toBe(1);
   expect(env.submitted[0]).toContain("task_123");
   expect(env.submitted[0]).not.toContain("CHOPPED_REPORT_FRAGMENT");
+  expect(env.toasts.map((toast) => toast.text)).toEqual([
+    "devin-review-repository · finished",
+  ]);
   await env.clock.advance(2100);
   expect(env.submitted.length).toBe(1);
 });
@@ -1450,6 +1459,10 @@ test("a blocked notification followed by a later completion submits only the ter
   expect(env.submitted.length).toBe(2);
   expect(env.submitted[1]).toContain("task.completed");
   expect(env.submitted[1]).not.toContain("task.blocked");
+  expect(env.toasts.map((toast) => toast.text)).toEqual([
+    "devin-review-repository · needs input",
+    "devin-review-repository · finished",
+  ]);
   await env.clock.advance(2100);
   await env.clock.settle();
   expect(env.submitted.length).toBe(2);

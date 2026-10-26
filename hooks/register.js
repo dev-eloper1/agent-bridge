@@ -223,6 +223,24 @@ function workerSummary(rows) {
     ...(cancelled ? [`${cancelled} cancelled`] : []),
   ].join(" · ");
 }
+function notificationText(events) {
+  const labels = events.map((event) => {
+    const task = tasks[event.taskId] ?? event;
+    const action =
+      event.type === "task.blocked" || event.type === "task.question"
+        ? "needs input"
+        : task.status
+          ? statusLabel(task)
+          : event.type.replace("task.", "").replaceAll("_", " ");
+    return `${task.workerName ?? title(task)} · ${action}`;
+  });
+  return plain(
+    labels.length === 1
+      ? labels[0]
+      : `${labels.length} worker updates · ${labels.join(" · ")}`,
+    160,
+  );
+}
 function preview(task) {
   if (task.question) return "Needs input: " + plain(task.question.summary, 200);
   const tool = task.recentActivity?.at(-1);
@@ -462,6 +480,13 @@ async function refresh($, notify) {
       (e) => isTerminalEvent(e.type) || !terminal(tasks[e.taskId]?.status),
     );
     rememberWorkers();
+    if (notify && incoming.size) {
+      try {
+        $.ui.toast(notificationText([...incoming.values()]), {
+          timeoutMs: 8000,
+        });
+      } catch {}
+    }
     for (const pending of Object.values(inFlight)) {
       const task = tasks[pending.taskId];
       if (task) {
