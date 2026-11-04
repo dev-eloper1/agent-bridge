@@ -717,3 +717,51 @@ test("daemon stop reports a failed final save and still removes its socket and l
   );
   assert.throws(() => runtime.store.readEventsSince(0), /not open/);
 });
+
+for (const backend of ["sqlite", "json"]) {
+  test(`${backend}: throwing listeners cannot roll back saved events or skip other listeners`, (t) => {
+    select(t, backend);
+    const dir = directory(t);
+    const store = new Store(dir, 10000);
+    store.state = migrationState();
+    store.save();
+    const notified = [];
+    store.subscribe(() => { throw Error("broken watcher"); });
+    store.subscribe(() => notified.push(store.state.events.at(-1).cursor));
+    assert.doesNotThrow(() => store.event(store.task("task"), "task.started", "started"));
+    assert.doesNotThrow(() => store.event(store.task("task"), "task.completed", "completed"));
+    assert.deepEqual(notified, [3, 4]);
+    assert.deepEqual(store.state.events, store.readEventsSince(0));
+    const saved = structuredClone(store.state.events);
+    store.close();
+    const reopened = new Store(dir, 10000);
+    assert.deepEqual(reopened.state.events, saved);
+    reopened.close();
+  });
+
+  test(`${backend}: failed event persistence rolls back memory without notifying and retry preserves sequence`, (t) => {
+    select(t, backend);
+    const dir = directory(t);
+    const store = new Store(dir, 10000);
+    store.state = migrationState();
+    store.save();
+    const before = structuredClone(store.state.events);
+    let notifications = 0;
+    store.subscribe(() => notifications++);
+    const persist = store.storage.persist;
+    store.storage.persist = () => { throw Error("injected save failure"); };
+    assert.throws(() => store.event(store.task("task"), "task.started", "failed save"), /injected save failure/);
+    assert.deepEqual(store.state.events, before);
+    assert.deepEqual(store.readEventsSince(0), before);
+    assert.equal(notifications, 0);
+    store.storage.persist = persist;
+    store.event(store.task("task"), "task.started", "retry");
+    assert.equal(notifications, 1);
+    assert.equal(store.state.events.at(-1).cursor, 3);
+    const saved = structuredClone(store.state.events);
+    store.close();
+    const reopened = new Store(dir, 10000);
+    assert.deepEqual(reopened.state.events, saved);
+    reopened.close();
+  });
+}

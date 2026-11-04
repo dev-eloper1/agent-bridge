@@ -12,6 +12,7 @@ import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv
 import { agentConcurrency, type Config } from "./config.js";
 import {
   Store,
+  eventKind,
   uid,
   now,
   terminal,
@@ -1039,7 +1040,11 @@ export class Runtime {
             const group = this.labelGroup(a.label);
             if (!group.total) throw Error("No tasks with this label");
             const timedOut = Date.now() >= deadline;
-            if (group.open === 0 || timedOut)
+            if (
+              group.open === 0 ||
+              group.byStatus.blocked_on_input > 0 ||
+              timedOut
+            )
               return {
                 tasks: group.tasks.map((t) => this.lean(t)),
                 timedOut,
@@ -1065,7 +1070,15 @@ export class Runtime {
                 timedOut: Date.now() >= deadline,
               };
           }
-          await new Promise((r) => setTimeout(r, 50));
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              clearTimeout(timer);
+              unsubscribe();
+              resolve();
+            };
+            const unsubscribe = this.store.subscribe(done);
+            const timer = setTimeout(done, Math.max(0, deadline - Date.now()));
+          });
         }
       }
       case "status":
@@ -1093,7 +1106,8 @@ export class Runtime {
         const events = this.store.state.events
           .filter((e) => e.cursor > a.afterCursor)
           .filter((e) => !a.label || tasks[e.taskId]?.labels?.includes(a.label))
-          .slice(0, a.limit);
+          .slice(0, a.limit)
+          .map((event) => ({ ...event, kind: eventKind(event.type) }));
         return {
           events,
           nextCursor: events.at(-1)?.cursor ?? a.afterCursor,
