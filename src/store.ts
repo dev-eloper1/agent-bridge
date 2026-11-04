@@ -3,10 +3,10 @@ import {
   existsSync,
   readFileSync,
   openSync,
-  writeSync,
   fsyncSync,
   closeSync,
   renameSync,
+  rmSync,
   lstatSync,
   realpathSync,
   constants,
@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { createStorage, JsonStorage, type StoragePort } from "./storage.js";
 import type { VerifySpec, VerificationResult } from "./verify-verdict.js";
 import type { Workspace, WorkspaceIdentity } from "./workspaces.js";
 import { z } from "zod";
@@ -138,7 +139,7 @@ export interface Event {
   requiresReply: boolean;
   artifactRefs: string[];
 }
-interface State {
+export interface State {
   triggerBudget?: { fires: number[] };
   triggers?: Record<string, Trigger>;
   version: 1;
@@ -258,6 +259,8 @@ const storedState = z
 export class Store {
   state: State;
   readonly artifactRoot: string;
+  private readonly storage: StoragePort;
+  private closed = false;
   constructor(
     readonly dir: string,
     readonly maxBytes: number,
@@ -266,37 +269,76 @@ export class Store {
     if (lstatSync(path.join(dir, "artifacts")).isSymbolicLink())
       throw Error("Unsafe artifact directory: symlink");
     this.artifactRoot = realpathSync(path.join(dir, "artifacts"));
-    if (existsSync(this.file)) {
-      try {
-        this.state = storedState.parse(
-          JSON.parse(readFileSync(this.file, "utf8")),
-        ) as State;
-      } catch {
-        throw Error(
-          `Invalid Agent Bridge state: ${this.file}. Original file preserved; restore a valid backup or inspect it before restarting.`,
-        );
+    const databaseExisted = existsSync(path.join(dir, "state.sqlite"));
+    this.storage = createStorage(dir);
+    let sourceFile = this.storage.file;
+    let imported = false;
+    try {
+      let loaded = this.storage.load();
+      const legacy = new JsonStorage(dir);
+      if (
+        loaded === undefined &&
+        this.storage.file !== legacy.file &&
+        existsSync(legacy.file)
+      ) {
+        sourceFile = legacy.file;
+        const state = storedState.parse(legacy.load()) as State;
+        this.storage.persist(state);
+        imported = true;
+        loaded = state;
       }
-    } else this.state = { version: 1, tasks: {}, sessions: {}, events: [] };
+      this.state =
+        loaded === undefined
+          ? { version: 1, tasks: {}, sessions: {}, events: [] }
+          : (storedState.parse(loaded) as State);
+      if (this.storage.file !== legacy.file && existsSync(legacy.file)) {
+        sourceFile = legacy.file;
+        if (!imported)
+          throw Error(
+            `Both ${this.storage.file} and ${legacy.file} hold state. Neither was changed. Preserve both, inspect their histories, and move ${legacy.file} aside before restarting SQLite.`,
+          );
+        const backup = legacy.file + ".bak";
+        renameSync(
+          legacy.file,
+          existsSync(backup) ? backup + "." + randomUUID() : backup,
+        );
+        const fd = openSync(dir, "r");
+        try {
+          fsyncSync(fd);
+        } finally {
+          closeSync(fd);
+        }
+      }
+    } catch (error) {
+      this.storage.close();
+      if (
+        !databaseExisted &&
+        !imported &&
+        this.storage.file === path.join(dir, "state.sqlite")
+      ) {
+        for (const suffix of ["", "-wal", "-shm"])
+          rmSync(this.storage.file + suffix, { force: true });
+      }
+      throw Error(
+        `Invalid Agent Bridge state: ${sourceFile}. Original file preserved; restore a valid backup or inspect it before restarting. ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
   }
   get file() {
-    return path.join(this.dir, "state.json");
+    return this.storage.file;
   }
   save() {
-    const tmp = this.file + ".tmp";
-    const fd = openSync(tmp, "w", 0o600);
-    try {
-      writeSync(fd, JSON.stringify(this.state));
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(tmp, this.file);
-    const d = openSync(this.dir, "r");
-    try {
-      fsyncSync(d);
-    } finally {
-      closeSync(d);
-    }
+    if (this.closed) throw Error("Store storage is not open");
+    this.storage.persist(this.state);
+  }
+  readEventsSince(sequence: number) {
+    return this.storage.readEventsSince(sequence);
+  }
+  close() {
+    if (this.closed) return;
+    this.storage.close();
+    this.closed = true;
   }
   artifactPath(taskId: string, name: string) {
     if (

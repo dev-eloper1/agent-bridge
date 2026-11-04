@@ -52,8 +52,8 @@ function fixture(t) {
   );
   const config = loadConfig(file);
   const runtime = new Runtime(config);
-  t.after(() => {
-    runtime.close();
+  t.after(async () => {
+    await runtime.close();
     rmSync(dir, { recursive: true, force: true });
   });
   return { runtime, dir, config, file };

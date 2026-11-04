@@ -37,7 +37,7 @@ flowchart TB
   Skill[Plugin delegation skill] --> Claude
   Claude <-->|MCP tools over stdio| MCP[Thin MCP facade]
   MCP <-->|HTTP over private Unix socket| Runtime[Local TypeScript daemon]
-  Runtime --> Store[(Atomic state.json: conversations, tasks, events)]
+  Runtime --> Store[(SQLite: conversations, tasks, events)]
   Runtime --> Artifacts[Private task artifacts on disk]
   Runtime --> Workspace[Project, directory, scratch or optional worktree]
   Runtime --> Guardian[Process guardian per active worker]
@@ -70,7 +70,7 @@ The daemon is independent of Claude and the MCP facade. Closing Claude's tool co
 | `src/workspaces.ts`            | Validate workspace modes and canonicalize existing directory selections                               |
 | `src/models.ts`                | Normalize legacy ACP models and modern categorized config options                                     |
 | `src/worker-host.ts`           | Process-group lifecycle and cleanup after pipe closure                                                |
-| `src/store.ts`                 | Durable state snapshots and bounded private artifact files                                            |
+| `src/store.ts`, `src/storage.ts` | Store facade, SQLite/JSON storage port and bounded private artifact files                                            |
 | `src/run.ts`                   | Bounded foreground coordination over existing daemon calls, MCP progress and cancellation             |
 | `src/mcp.ts`                   | Eleven Claude-facing tools, including foreground run and bounded wait; no transport/session ownership |
 | `scripts/pi-readonly.mjs`      | Restrict Pi tools, disable executable extensions/MCP, surface otherwise swallowed model errors        |
@@ -87,7 +87,15 @@ These are separate concepts:
 - **eventId / cursor**: immutable event identity and ordered inbox position. Each coordinator stores its own cursor.
 - **artifact reference**: `artifact://task_<uuid>/output.txt`; resolves only through the bounded artifact API.
 
-State is under `runtime.stateDir`, default `.agent-bridge/`. `state.json` contains conversation metadata, compact tasks and events. An exclusive lock prevents normal concurrent writers. Saves fsync a temporary file, rename it over the snapshot, and fsync the directory. Artifacts append separately. This supports process-restart durability, but is not a cross-file power-loss transaction or an exactly-once side-effect guarantee. Whole-state rewrites and unpruned event history are acceptable for this prototype; SQLite is the next storage step if scale demands it.
+State is under `runtime.stateDir`, default `.agent-bridge/`. The default `state.sqlite` uses Node's built-in `node:sqlite`, WAL mode and `synchronous=FULL`. The existing exclusive daemon lock remains the single-writer boundary. Each Store save commits entity changes, trigger budgets and new events in one transaction. Entity rows hold JSON by collection and ID; unchanged rows are not rewritten. Events are append-only with a global integer sequence matching the existing cursor, and the storage port supports replay after a sequence. The Store facade and runtime mutation pattern stay unchanged.
+
+On the first SQLite load, a valid `state.json` is imported transactionally and renamed to `state.json.bak`. Existing backups are preserved using a unique suffix. If a committed database and `state.json` both exist, startup refuses with a message naming both files and preserves both histories for inspection. This also covers interruption between import commit and source rename; after preserving both files, move the JSON source aside before restarting SQLite. Invalid state fails with a diagnostic naming its source file. A newly created database is removed after a failed import, so it does not block JSON recovery. Set `AGENT_BRIDGE_STORAGE=json` to use the original fsync/rename snapshot adapter in a JSON state directory. Selecting JSON is refused whenever the SQLite database contains any rows, including when a JSON source is also present. An initialized SQLite database with no rows permits explicit JSON selection after inspection; automatic export back to JSON is not implemented. An unavailable `node:sqlite` module produces a warning and falls back to JSON only when no SQLite database exists. Database open, validation and write errors fail rather than silently switching stores.
+
+Graceful daemon stop cancels pending questions and drains in-flight calls, worker shutdown and verification callbacks for up to five seconds before the final save and explicit database close. On timeout it warns and closes anyway; a closed Store rejects late saves on either adapter. The daemon keeps its exclusive lock through shutdown and removes its lock and socket even if the final save fails, logging that failure. Closing the last SQLite connection normally checkpoints and removes the WAL; if another connection keeps it open or the process crashes, retain the database and its WAL together so SQLite can recover committed transactions on restart.
+
+For recovery, stop the daemon and preserve the entire state directory first. If both state files exist, retain copies of both before choosing a history: move `state.json` to a separate recovery location to resume SQLite, or recover that JSON file in a separate state directory. SQLite startup never automatically archives a conflicting JSON source. If `node:sqlite` is unavailable for an existing database, use a Node release with SQLite support to reopen that directory; the daemon refuses to silently switch its history to JSON. To run the pre-migration JSON backup, copy `state.json.bak` to `state.json` in a **separate** state directory, copy the matching `artifacts/` if needed, configure `runtime.stateDir` to that directory, and start with `AGENT_BRIDGE_STORAGE=json`. That backup contains only history present at migration time: SQLite changes made afterwards are absent. Keep the original SQLite directory for recovery of newer history; no SQLite-to-JSON export is provided.
+
+Artifacts append separately, outside the state transaction. Neither adapter provides an exactly-once side-effect guarantee, and event history is still retained without pruning. Saves still scan the in-memory facade to find changes; this first version reduces database writes rather than removing all work proportional to retained state.
 
 ## Explicit background task flow
 
